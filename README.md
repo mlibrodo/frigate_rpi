@@ -33,3 +33,13 @@ Linux pi-hailo 6.12.62+rpt-rpi-2712 #1 SMP PREEMPT Debian 1:6.12.62-1+rpt1~bookw
 
 ```
 
+
+```
+curl -X POST http://localhost:9001/model/add \
+  -H "Content-Type: application/json" \
+  -d '{"model_id":"ember-training-poc/1","api_key":"'"$ROBOFLOW_API_KEY"'"}'
+```
+
+```
+python3 pump.py
+```

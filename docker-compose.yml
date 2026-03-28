@@ -19,3 +19,12 @@ services:
       - /dev/video0:/dev/video0 # logitecth HD Pro Webcam C920
       - /dev/hailo0:/dev/hailo0
 
+          # optional: ONLY if you want to manage roboflow via compose too
+  inference-server:
+    image: roboflow/roboflow-inference-server-arm-cpu:latest
+    container_name: inference-server
+    restart: unless-stopped
+    ports:
+      - "9001:9001"
+    environment:
+      - ROBOFLOW_API_KEY=${ROBOFLOW_API_KEY}
