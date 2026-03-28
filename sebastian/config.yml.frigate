@@ -1,0 +1,41 @@
+mqtt:
+  enabled: false
+detectors:
+  hailo0:
+    type: hailo8l
+    device: PCIe
+    model:
+      path: /config/model_cache/h8l_cache/ssd_mobilenet_v1.hef
+      width: 300
+      height: 300
+go2rtc:
+  rtsp:
+    listen: :8555
+  streams:
+    c920: 
+      ffmpeg:device?video=/dev/video0&video_size=1280x720&framerate=10&input_format=h264
+cameras:
+  usb_c920:
+    enabled: true
+    ffmpeg:
+      inputs:
+        - path: rtsp://127.0.0.1:8555/c920
+          input_args: preset-rtsp-restream
+          roles:
+            - detect
+            - record
+      output_args:
+        record: preset-record-generic
+    detect:
+      width: 300
+      height: 300
+      fps: 5
+    record:
+      enabled: true
+    snapshots:
+      enabled: true
+      timestamp: true
+      bounding_box: true
+      retain:
+        default: 7
+version: 0.17-0
