@@ -1,0 +1,21 @@
+services:
+  frigate:
+    container_name: frigate
+    image: ghcr.io/blakeblackshear/frigate:stable
+    restart: unless-stopped
+    shm_size: "256mb"
+    ports:
+      - "5000:5000"
+      # Frigate’s container wants to expose its internal RTSP server on host port 8554, but RPi already has a separate RTSP server running  
+      - "18554:8554" 
+      - "8555:8555/tcp"
+      - "8555:8555/udp"
+    volumes:
+      - ./config:/config
+      - ./storage:/media/frigate
+    environment:
+      - TZ=America/Los_Angeles
+    devices:
+      - /dev/video0:/dev/video0 # logitecth HD Pro Webcam C920
+      - /dev/hailo0:/dev/hailo0
+
