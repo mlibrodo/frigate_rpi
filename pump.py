@@ -108,8 +108,8 @@ def parse_config() -> Config:
         debounce_hits = debounce_window
 
     return Config(
-        frigate_url=os.environ.get("FRIGATE_URL", "http://127.0.0.1:5000").rstrip("/"),
-        frigate_camera=os.environ.get("FRIGATE_CAMERA", "c920"),
+        frigate_url=os.environ.get("FRIGATE_URL", "http://192.168.1.102:5000").rstrip("/"),
+        frigate_camera=os.environ.get("FRIGATE_CAMERA", "tahoe_cam_1"),
         roboflow_url=os.environ.get("ROBOFLOW_URL", "http://127.0.0.1:9001").rstrip("/"),
         model_id=os.environ.get("MODEL_ID", "ember-training-poc/1").strip("/"),
         api_key=api_key,
@@ -225,9 +225,10 @@ def main() -> None:
         try:
             # 1) fetch JPEG from Frigate
             print('XXXX', latest_url)
+            latest_url='http://192.168.1.102:5000/api/tahoe_cam1/latest.jpg'
             img = fetch_frame(session, latest_url, cfg.frame_timeout_s)
 
-            print('YYYYY')
+            print('YYYYY', latest_url)
             # 2) save rotating frames for debugging
             frame_idx = save_rotating_frame(
                 frame_dir=frame_dir,
