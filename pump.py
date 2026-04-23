@@ -166,9 +166,9 @@ def infer_classification(
     img_bytes: bytes,
     timeout_s: float,
 ) -> dict:
-    headers = {"Authorization": f"Bearer {api_key}"}
+    
     files = {"file": ("frame.jpg", img_bytes, "image/jpeg")}
-    r = session.post(infer_url, headers=headers, files=files, timeout=timeout_s)
+    r = session.post(f"{infer_url}?api_key={api_key}", files=files, timeout=timeout_s)
     r.raise_for_status()
     return r.json()
 
@@ -224,8 +224,10 @@ def main() -> None:
         t0 = time.time()
         try:
             # 1) fetch JPEG from Frigate
+            print('XXXX', latest_url)
             img = fetch_frame(session, latest_url, cfg.frame_timeout_s)
 
+            print('YYYYY')
             # 2) save rotating frames for debugging
             frame_idx = save_rotating_frame(
                 frame_dir=frame_dir,

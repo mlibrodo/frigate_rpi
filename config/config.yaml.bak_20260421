@@ -1,0 +1,31 @@
+mqtt:
+  enabled: false
+
+cameras:
+  c920:
+    enabled: true
+    ffmpeg:
+      inputs:
+        - path: /dev/video0
+          input_args:
+            - -f
+            - v4l2
+            - -input_format
+            - mjpeg
+            - -video_size
+            - 1280x720
+            - -framerate
+            - '10'
+          roles:
+            - record
+
+    record:
+      enabled: false
+
+    snapshots:
+      enabled: false
+
+detect:
+  enabled: false
+
+version: 0.16-0

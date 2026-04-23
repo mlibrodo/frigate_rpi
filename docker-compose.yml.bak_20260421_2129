@@ -1,0 +1,29 @@
+services:
+  frigate:
+    container_name: frigate
+    image: ghcr.io/blakeblackshear/frigate:stable
+    restart: unless-stopped
+    shm_size: "256mb"
+    ports:
+      - "5000:5000"
+      # Frigate’s container wants to expose its internal RTSP server on host port 8554, but RPi already has a separate RTSP server running  
+      - "18554:8554" 
+      - "8555:8555/tcp"
+      - "8555:8555/udp"
+    volumes:
+      - ./config:/config
+      - ./storage:/media/frigate
+    environment:
+      - TZ=America/Los_Angeles
+    devices:
+      - /dev/hailo0:/dev/hailo0
+
+          # optional: ONLY if you want to manage roboflow via compose too
+  inference-server:
+    image: roboflow/roboflow-inference-server-arm-cpu:latest
+    container_name: inference-server
+    restart: unless-stopped
+    ports:
+      - "9001:9001"
+    environment:
+      - ROBOFLOW_API_KEY=${ROBOFLOW_API_KEY}

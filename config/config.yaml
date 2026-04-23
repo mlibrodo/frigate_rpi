@@ -2,28 +2,30 @@ mqtt:
   enabled: false
 
 cameras:
-  c920:
+  tahoe_cam1:
     enabled: true
     ffmpeg:
       inputs:
-        - path: /dev/video0
-          input_args:
-            - -f
-            - v4l2
-            - -input_format
-            - mjpeg
-            - -video_size
-            - 1280x720
-            - -framerate
-            - '10'
+        - path: rtsp://admin:Pyregon26!@192.168.1.108:554/cam/realmonitor?channel=1&subtype=1
+          roles:
+            - detect
+        - path: rtsp://admin:Pyregon26!@192.168.1.108:554/cam/realmonitor?channel=1&subtype=0
           roles:
             - record
-
+      input_args: preset-rtsp-restream
+    detect:
+      width: 704
+      height: 480
+      fps: 5
     record:
-      enabled: false
-
+      enabled: true
+      retain:
+        days: 3
+        mode: motion
     snapshots:
-      enabled: false
+      enabled: true
+      retain:
+        default: 7
 
 detect:
   enabled: false

@@ -16,7 +16,6 @@ services:
     environment:
       - TZ=America/Los_Angeles
     devices:
-      - /dev/video0:/dev/video0 # logitecth HD Pro Webcam C920
       - /dev/hailo0:/dev/hailo0
 
           # optional: ONLY if you want to manage roboflow via compose too
