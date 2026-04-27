@@ -1,0 +1,68 @@
+{
+  "ember_trigger_confidence": 90,
+  "ember_trigger_duration": 30,
+  "ember_clear_confidence": 80,
+  "ember_clear_duration": 1800,
+  "engine_start_retries": 10,
+  "engine_start_retry_delay": 15,
+  "initial_upwind_duration": 300,
+  "zone_base_duration": 120,
+  "wind_speed_moderate": 20,
+  "wind_speed_high": 40,
+  "duration_multiplier_moderate": 1.5,
+  "duration_multiplier_high": 2.0,
+  "anemometer_poll_interval": 60,
+  "camera_fallback_window": 30,
+  "zones": [
+    {
+      "zone_id": 1,
+      "label": "Zone 1",
+      "lat": null,
+      "lon": null
+    },
+    {
+      "zone_id": 2,
+      "label": "Zone 2",
+      "lat": null,
+      "lon": null
+    },
+    {
+      "zone_id": 3,
+      "label": "Zone 3",
+      "lat": null,
+      "lon": null
+    },
+    {
+      "zone_id": 4,
+      "label": "Zone 4",
+      "lat": null,
+      "lon": null
+    }
+  ],
+  "cameras": [
+    {
+      "camera_id": 1,
+      "label": "Camera 1",
+      "bearing": 0,
+      "cardinal": "N"
+    },
+    {
+      "camera_id": 2,
+      "label": "Camera 2",
+      "bearing": 90,
+      "cardinal": "E"
+    },
+    {
+      "camera_id": 3,
+      "label": "Camera 3",
+      "bearing": 180,
+      "cardinal": "S"
+    },
+    {
+      "camera_id": 4,
+      "label": "Camera 4",
+      "bearing": 270,
+      "cardinal": "W"
+    }
+  ]
+}
