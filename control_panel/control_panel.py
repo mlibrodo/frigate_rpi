@@ -2,6 +2,16 @@
 """
 Pyregon Wildfire Defense - Control Panel
 Optimized for 800x480 5" touchscreen on Raspberry Pi
+
+Integrated modules:
+  - config.py          : persistent JSON settings
+  - auto_mode.py       : AUTO mode state machine
+  - anemometer.py      : Renke RS-CFSFX-N01 Modbus RTU driver
+  - settings_modal.py  : gear-icon settings overlay
+
+Detection pipeline:
+  pump.py → Roboflow API → JSON stdout → _read_pump_output()
+  → AutoModeController.feed_detection() → AUTO mode state machine
 """
 
 import tkinter as tk
@@ -15,35 +25,47 @@ import logging
 from datetime import datetime
 from collections import deque
 
+# ── Pyregon modules ────────────────────────────────────────────────────────────
+from config import config
+from auto_mode import AutoModeController, AutoState
+from anemometer import Anemometer, SimulatedAnemometer
+from settings_modal import SettingsModal
+
 # ─── Configuration ─────────────────────────────────────────────────────────────
 
 DISPLAY_WIDTH  = 800
 DISPLAY_HEIGHT = 480
-FULLSCREEN     = False   # Set True when running on touchscreen only
-SCREEN_OFFSET  = "+3840+0"  # Offset to 5" screen; set "+0+0" for single display
+FULLSCREEN     = False
+SCREEN_OFFSET  = "+3840+0"
 
 # Relay mapping (Sequent Microsystems 8-relay HAT, board=0)
-RELAY_CHOKE_EXTEND   = 1   # Choke actuator extension
-RELAY_STARTER        = 2   # Starter relay
-RELAY_CHOKE_RETRACT  = 3   # Choke actuator retraction
-RELAY_IGNITION_KILL  = 4   # Ignition coil shut-off (NO — energize to kill)
-RELAY_VALVE_ZONE1    = 5   # Sprinkler zone 1
-RELAY_VALVE_ZONE2    = 6   # Sprinkler zone 2
-RELAY_VALVE_ZONE3    = 7   # Sprinkler zone 3
-RELAY_VALVE_ZONE4    = 8   # Sprinkler zone 4
+RELAY_CHOKE_EXTEND   = 1
+RELAY_STARTER        = 2
+RELAY_CHOKE_RETRACT  = 3
+RELAY_IGNITION_KILL  = 4
+RELAY_VALVE_ZONE1    = 5
+RELAY_VALVE_ZONE2    = 6
+RELAY_VALVE_ZONE3    = 7
+RELAY_VALVE_ZONE4    = 8
 
-# Frigate NVR endpoint
-FRIGATE_URL = "http://localhost:5000"
+ZONE_RELAYS = {1: RELAY_VALVE_ZONE1, 2: RELAY_VALVE_ZONE2,
+               3: RELAY_VALVE_ZONE3, 4: RELAY_VALVE_ZONE4}
 
-# ─── Pump (Frigate → Roboflow inference) ──────────────────────────────────────
-PUMP_SCRIPT     = "/home/librodo112/frigate_rpi/pump.py"
-PUMP_CAMERA     = "tahoe_cam1"
-PUMP_API_KEY    = "B5p60bLPJYURpEpoGHcc"
-PUMP_MODEL_ID   = "ember-training-poc/1"
-PUMP_FPS        = "2.0"
+# Frigate / pump
+FRIGATE_URL   = "http://localhost:5000"
+PUMP_SCRIPT   = "/home/librodo112/frigate_rpi/pump.py"
+PUMP_CAMERA   = "tahoe_cam1"
+PUMP_API_KEY  = "B5p60bLPJYURpEpoGHcc"
+PUMP_MODEL_ID = "ember-training-poc/1"
+PUMP_FPS      = "2.0"
+
+# Anemometer serial port
+ANEMOMETER_PORT    = "/dev/ttyUSB0"
+ANEMOMETER_ADDRESS = 1
+ANEMOMETER_BAUD    = 4800
 
 # Log file
-LOG_FILE = "/var/log/wildfire_panel.log"
+LOG_FILE        = "/var/log/wildfire_panel.log"
 LOG_BUFFER_SIZE = 200
 
 # ─── Logging ───────────────────────────────────────────────────────────────────
@@ -85,6 +107,62 @@ def relay_set(relay_num: int, on: bool):
 def relay_get(relay_num: int) -> bool:
     return _relay_state.get(relay_num, False)
 
+# ─── Relay controller bridge ───────────────────────────────────────────────────
+# Adapts existing relay_set() to the interface AutoModeController expects.
+
+class RelayControllerBridge:
+    """
+    Translates AutoModeController calls into relay_set() calls
+    using the existing EngineSequencer for start/stop sequences.
+    """
+    def __init__(self, engine_sequencer, status_callback=None):
+        self._engine = engine_sequencer
+        self._cb     = status_callback   # set by WildfirePanel after init
+
+    def set_status_callback(self, cb):
+        self._cb = cb
+
+    def start_engine(self) -> bool:
+        """Runs the existing choke+crank sequence. Returns True if engine started."""
+        if self._engine.running:
+            return True
+        event = threading.Event()
+        result = [False]
+
+        def _cb(msg):
+            if self._cb:
+                self._cb(msg)
+            if "RUNNING" in msg:
+                result[0] = True
+                event.set()
+            elif "FAILED" in msg:
+                event.set()
+
+        self._engine.start(status_callback=_cb)
+        event.wait(timeout=30)   # generous timeout for full choke+crank sequence
+        return result[0]
+
+    def stop_engine(self):
+        if self._engine.running:
+            self._engine.stop(status_callback=self._cb)
+
+    def open_zone(self, zone_id: int):
+        rnum = ZONE_RELAYS.get(zone_id)
+        if rnum:
+            relay_set(rnum, True)
+            log.info(f"[AUTO] Zone {zone_id} OPEN")
+
+    def close_zone(self, zone_id: int):
+        rnum = ZONE_RELAYS.get(zone_id)
+        if rnum:
+            relay_set(rnum, False)
+            log.info(f"[AUTO] Zone {zone_id} CLOSED")
+
+    def close_all_zones(self):
+        for zone_id, rnum in ZONE_RELAYS.items():
+            relay_set(rnum, False)
+        log.info("[AUTO] All zones CLOSED")
+
 # ─── Engine sequencer ──────────────────────────────────────────────────────────
 
 class EngineSequencer:
@@ -103,13 +181,15 @@ class EngineSequencer:
     def start(self, status_callback=None):
         if self.running or self.starting:
             return
-        self._thread = threading.Thread(target=self._start_seq, args=(status_callback,), daemon=True)
+        self._thread = threading.Thread(
+            target=self._start_seq, args=(status_callback,), daemon=True)
         self._thread.start()
 
     def stop(self, status_callback=None):
         if not self.running or self.stopping:
             return
-        self._thread = threading.Thread(target=self._stop_seq, args=(status_callback,), daemon=True)
+        self._thread = threading.Thread(
+            target=self._stop_seq, args=(status_callback,), daemon=True)
         self._thread.start()
 
     def _start_seq(self, cb):
@@ -153,8 +233,7 @@ class EngineSequencer:
             if cb: cb(msg)
         try:
             notify("Closing all valves...")
-            for rnum in [RELAY_VALVE_ZONE1, RELAY_VALVE_ZONE2,
-                         RELAY_VALVE_ZONE3, RELAY_VALVE_ZONE4]:
+            for rnum in ZONE_RELAYS.values():
                 relay_set(rnum, False)
 
             notify("Killing ignition...")
@@ -171,19 +250,6 @@ class EngineSequencer:
             self.stopping = False
 
 engine = EngineSequencer()
-
-# ─── Frigate ───────────────────────────────────────────────────────────────────
-
-def get_frigate_stats():
-    try:
-        import urllib.request
-        with urllib.request.urlopen(
-                f"{FRIGATE_URL}/api/events?limit=5&label=fire&label=smoke", timeout=2) as r:
-            data = json.loads(r.read())
-            return [f"{e.get('camera','?')} — {e.get('label','?')} {int(e.get('score',0)*100)}%"
-                    for e in data]
-    except Exception:
-        return []
 
 # ─── Colour palette ────────────────────────────────────────────────────────────
 
@@ -203,14 +269,24 @@ C = {
     "btn_stop":  "#3a1a1a",
 }
 
-# Font sizes tuned for 800x480 touchscreen
-FONT_HDR   = ("Courier New", 13, "bold")   # Header bar
-FONT_TAB   = ("Courier New", 12, "bold")   # Tab labels
-FONT_TITLE = ("Courier New", 14, "bold")   # Section titles
-FONT_BIG   = ("Courier New", 22, "bold")   # Status indicators
-FONT_BTN   = ("Courier New", 14, "bold")   # Buttons
-FONT_BODY  = ("Courier New", 12)           # Body text
-FONT_SMALL = ("Courier New", 11)           # Small labels / log
+FONT_HDR   = ("Courier New", 13, "bold")
+FONT_TAB   = ("Courier New", 12, "bold")
+FONT_TITLE = ("Courier New", 14, "bold")
+FONT_BIG   = ("Courier New", 22, "bold")
+FONT_BTN   = ("Courier New", 14, "bold")
+FONT_BODY  = ("Courier New", 12)
+FONT_SMALL = ("Courier New", 11)
+
+# AUTO state → display colour mapping
+AUTO_STATE_COLOR = {
+    AutoState.IDLE:     C["muted"],
+    AutoState.WATCHING: C["amber"],
+    AutoState.STARTING: C["amber"],
+    AutoState.PHASE1:   C["blue"],
+    AutoState.CYCLING:  C["green"],
+    AutoState.CLEARING: C["amber"],
+    AutoState.STOPPING: C["red"],
+}
 
 # ─── Main Application ──────────────────────────────────────────────────────────
 
@@ -237,6 +313,8 @@ class WildfirePanel(tk.Tk):
         self._pump_top    = "unknown"
         self._pump_conf   = 0.0
 
+        # ── Sensor / AUTO mode initialisation ─────────────────────────────────
+        self._init_sensors()
         self._build_ui()
         self._start_polling()
         self._start_pump()
@@ -244,6 +322,46 @@ class WildfirePanel(tk.Tk):
         self.bind("<Escape>", lambda e: None)
         self.protocol("WM_DELETE_WINDOW", self._safe_quit)
         self._append_log("Panel started")
+
+    # ─── Sensor / AUTO mode init ───────────────────────────────────────────────
+
+    def _init_sensors(self):
+        """Initialise anemometer, relay bridge, and AUTO controller."""
+
+        # Anemometer — fall back to simulation if port unavailable
+        try:
+            self._anemometer = Anemometer(
+                port=ANEMOMETER_PORT,
+                device_address=ANEMOMETER_ADDRESS,
+                baud_rate=ANEMOMETER_BAUD,
+                poll_interval=1.0,
+            )
+            if not self._anemometer.connect():
+                raise RuntimeError("Could not open serial port")
+            self._anemometer.start_polling()
+            log.info("Anemometer connected.")
+        except Exception as e:
+            log.warning(f"Anemometer unavailable ({e}) — using simulation.")
+            self._anemometer = SimulatedAnemometer(speed_mph=12.0, direction_deg=45.0)
+
+        # Relay bridge
+        self._relay_bridge = RelayControllerBridge(engine)
+
+        # AUTO mode controller — detection fed directly from pump.py output
+        property_center = config.get("property_center") or {"lat": 38.933, "lon": -119.984}
+        self._auto_ctrl = AutoModeController(
+            relay_controller = self._relay_bridge,
+            anemometer       = self._anemometer,
+            property_center  = property_center,
+            on_state_change  = self._on_auto_state_change,
+        )
+        # Wire status callback into relay bridge
+        self._relay_bridge.set_status_callback(
+            lambda msg: self.after(0, self._seq_status, msg)
+        )
+
+        # Track Roboflow pump status for UI
+        self._roboflow_online = False
 
     # ─── UI construction ────────────────────────────────────────────────────────
 
@@ -262,6 +380,10 @@ class WildfirePanel(tk.Tk):
                   padx=10, pady=0,
                   command=self._safe_quit).pack(side="right", padx=6, pady=4)
 
+        # Gear / settings button
+        gear_btn, self._settings_modal = SettingsModal.create_gear_button(hdr, self)
+        gear_btn.pack(side="right", padx=2, pady=4)
+
         self._lbl_time = tk.Label(hdr, text="", font=FONT_BODY,
                                   bg=C["header_bg"], fg=C["muted"])
         self._lbl_time.pack(side="right", padx=10)
@@ -269,6 +391,16 @@ class WildfirePanel(tk.Tk):
         self._lbl_mode = tk.Label(hdr, text="MANUAL", font=FONT_TAB,
                                   bg=C["header_bg"], fg=C["muted"])
         self._lbl_mode.pack(side="right", padx=6)
+
+        # Wind readout in header (speed + direction)
+        self._lbl_wind = tk.Label(hdr, text="~ -- mph  --°",
+                                  font=FONT_BODY, bg=C["header_bg"], fg=C["blue"])
+        self._lbl_wind.pack(side="right", padx=10)
+
+        # Anemometer online dot
+        self._lbl_anemo_dot = tk.Label(hdr, text="●", font=FONT_BODY,
+                                       bg=C["header_bg"], fg=C["muted"])
+        self._lbl_anemo_dot.pack(side="right", padx=2)
 
         # ── Tab bar (44px) ─────────────────────────────────────────────────────
         tabbar = tk.Frame(self, bg=C["bg"], height=44)
@@ -288,7 +420,7 @@ class WildfirePanel(tk.Tk):
             btn.pack(side="left", fill="y", expand=True)
             self._tab_btns[key] = btn
 
-        # ── Content area (remaining height = 480-40-44 = 396px) ───────────────
+        # ── Content area ───────────────────────────────────────────────────────
         self._content = tk.Frame(self, bg=C["bg"])
         self._content.pack(fill="both", expand=True)
 
@@ -313,14 +445,15 @@ class WildfirePanel(tk.Tk):
         for k, btn in self._tab_btns.items():
             btn.configure(
                 bg=C["header_bg"] if k == key else C["surface"],
-                fg=C["text"] if k == key else C["muted"])
+                fg=C["text"]      if k == key else C["muted"])
 
-    # ─── CONTROL tab (800x396) ──────────────────────────────────────────────────
-    # Layout:
-    #   Row 1 (y=0..180):  Engine block (w=310) | Zones quick-view (w=480)
-    #   Row 2 (y=184..260): Sequence status label + mode toggle
-    #   Row 3 (y=264..396): Recent log
-    #   Bottom (y=350..396): ALL OFF button
+    # ─── CONTROL tab ───────────────────────────────────────────────────────────
+    # Layout (800×396):
+    #   Col A (x=4,   w=310): Engine block (h=178)
+    #   Col B (x=322, w=190): Mode block (h=88) + Zone quick-view (h=84)
+    #   Col C (x=520, w=276): AUTO status panel (h=178)
+    #   Row 2 (y=188): Sequence status
+    #   Row 3 (y=212): Recent log (w=510) | ALL OFF (w=274)
 
     def _build_main_tab(self):
         p = self._pages["main"]
@@ -375,6 +508,56 @@ class WildfirePanel(tk.Tk):
             lbl.pack(fill="x")
             self._main_zone_labels[i] = lbl
 
+        # ── AUTO status panel ─────────────────────────────────────────────────
+        auto_panel = tk.LabelFrame(p, text=" AUTO STATUS ", font=FONT_SMALL,
+                                   bg=C["bg"], fg=C["muted"], bd=1, relief="solid")
+        auto_panel.place(x=520, y=4, width=276, height=178)
+
+        # State indicator
+        self._lbl_auto_state = tk.Label(auto_panel, text="IDLE",
+                                        font=FONT_BIG, bg=C["bg"], fg=C["muted"])
+        self._lbl_auto_state.place(x=0, y=4, width=274, height=40)
+
+        # Wind speed + direction
+        self._lbl_wind_detail = tk.Label(auto_panel,
+                                         text="Wind: -- mph  --°  (--)",
+                                         font=FONT_SMALL, bg=C["bg"], fg=C["blue"])
+        self._lbl_wind_detail.place(x=6, y=48, width=262, height=18)
+
+        # Ember confidence bar background
+        tk.Label(auto_panel, text="Ember:", font=FONT_SMALL,
+                 bg=C["bg"], fg=C["muted"]).place(x=6, y=70, width=50, height=16)
+
+        self._ember_bar_bg = tk.Frame(auto_panel, bg=C["surface"],
+                                      width=190, height=12)
+        self._ember_bar_bg.place(x=58, y=72)
+        self._ember_bar_fill = tk.Frame(self._ember_bar_bg, bg=C["red"], height=12)
+        self._ember_bar_fill.place(x=0, y=0, width=0, height=12)
+
+        self._lbl_ember_pct = tk.Label(auto_panel, text="0%",
+                                       font=FONT_SMALL, bg=C["bg"], fg=C["muted"])
+        self._lbl_ember_pct.place(x=252, y=70, width=20, height=16)
+
+        # Active zone indicator
+        self._lbl_active_zone = tk.Label(auto_panel, text="Zone: --",
+                                         font=FONT_SMALL, bg=C["bg"], fg=C["muted"])
+        self._lbl_active_zone.place(x=6, y=92, width=262, height=18)
+
+        # Anemometer status
+        self._lbl_anemo_status = tk.Label(auto_panel, text="Anemometer: --",
+                                          font=FONT_SMALL, bg=C["bg"], fg=C["muted"])
+        self._lbl_anemo_status.place(x=6, y=114, width=262, height=18)
+
+        # Roboflow / pump.py status
+        self._lbl_roboflow_status = tk.Label(auto_panel, text="Roboflow: --",
+                                             font=FONT_SMALL, bg=C["bg"], fg=C["muted"])
+        self._lbl_roboflow_status.place(x=6, y=136, width=262, height=18)
+
+        # Cycle counter
+        self._lbl_cycle = tk.Label(auto_panel, text="Cycle: --",
+                                   font=FONT_SMALL, bg=C["bg"], fg=C["muted"])
+        self._lbl_cycle.place(x=6, y=156, width=262, height=16)
+
         # ── Sequence status ───────────────────────────────────────────────────
         self._lbl_seq = tk.Label(p, text="", font=FONT_SMALL,
                                  bg=C["bg"], fg=C["amber"], anchor="w")
@@ -400,7 +583,6 @@ class WildfirePanel(tk.Tk):
         self._btn_all_off.place(x=522, y=212, width=274, height=130)
 
     # ─── ZONES tab ──────────────────────────────────────────────────────────────
-    # 4 large zone buttons across the top, open-all/close-all below
 
     def _build_zones_tab(self):
         p = self._pages["zones"]
@@ -427,7 +609,6 @@ class WildfirePanel(tk.Tk):
             self._zone_labels[i] = lbl
             self._zone_btns[i]   = btn
 
-        # Open all / close all
         tk.Button(p, text="OPEN ALL ZONES", font=FONT_BTN,
                   bg=C["btn_on"], fg=C["green"],
                   activebackground="#2a4a2a", relief="flat", bd=0,
@@ -438,7 +619,6 @@ class WildfirePanel(tk.Tk):
                   activebackground="#5a1a1a", relief="flat", bd=0,
                   command=self._zones_all_close).place(x=402, y=212, width=394, height=60)
 
-        # Relay status table
         tbl = tk.LabelFrame(p, text=" RELAY STATUS ", font=FONT_SMALL,
                             bg=C["bg"], fg=C["muted"], bd=1, relief="solid")
         tbl.place(x=4, y=282, width=792, height=110)
@@ -472,38 +652,45 @@ class WildfirePanel(tk.Tk):
     def _build_camera_tab(self):
         p = self._pages["camera"]
 
-        tk.Label(p, text="ROBOFLOW INFERENCE", font=FONT_TITLE,
-                 bg=C["bg"], fg=C["amber"]).pack(pady=(12, 4))
+        tk.Label(p, text="EMBER DETECTION", font=FONT_TITLE,
+                 bg=C["bg"], fg=C["amber"]).pack(pady=(8, 2))
 
-        # Prediction result
-        result_frame = tk.LabelFrame(p, text=" LATEST PREDICTION ", font=FONT_SMALL,
+        # ── Roboflow / pump result ─────────────────────────────────────────────
+        result_frame = tk.LabelFrame(p, text=" ROBOFLOW INFERENCE ", font=FONT_SMALL,
                                      bg=C["bg"], fg=C["muted"], bd=1, relief="solid")
-        result_frame.pack(fill="x", padx=12, pady=8)
+        result_frame.pack(fill="x", padx=12, pady=4)
 
         self._lbl_pump_result = tk.Label(result_frame, text="?  Waiting...",
                                          font=FONT_BIG, bg=C["bg"], fg=C["muted"])
-        self._lbl_pump_result.pack(pady=(10, 2))
+        self._lbl_pump_result.pack(pady=(8, 2))
 
         self._lbl_pump_conf = tk.Label(result_frame, text="Confidence: --",
                                        font=FONT_BODY, bg=C["bg"], fg=C["muted"])
-        self._lbl_pump_conf.pack(pady=(0, 10))
+        self._lbl_pump_conf.pack(pady=(0, 8))
 
-        # Camera info
-        cam_frame = tk.LabelFrame(p, text=" CAMERAS ", font=FONT_SMALL,
+        # ── Per-camera ember confidence grid ──────────────────────────────────
+        cam_frame = tk.LabelFrame(p, text=" CAMERA EMBER CONFIDENCE ", font=FONT_SMALL,
                                   bg=C["bg"], fg=C["muted"], bd=1, relief="solid")
-        cam_frame.pack(fill="x", padx=12, pady=6)
+        cam_frame.pack(fill="x", padx=12, pady=4)
 
-        row = tk.Frame(cam_frame, bg=C["bg"])
-        row.pack(fill="x", padx=6, pady=4)
-        tk.Label(row, text="Camera 1:", font=FONT_BODY,
-                 bg=C["bg"], fg=C["muted"], width=12, anchor="w").pack(side="left")
-        tk.Label(row, text="tahoe_cam1 (IP)", font=FONT_BODY,
-                 bg=C["bg"], fg=C["green"], anchor="w").pack(side="left")
+        cam_labels_row = tk.Frame(cam_frame, bg=C["bg"])
+        cam_labels_row.pack(fill="x", padx=6, pady=4)
+
+        self._cam_conf_labels = {}
+        cam_info = [(1, "N"), (2, "E"), (3, "S"), (4, "W")]
+        for cam_id, cardinal in cam_info:
+            cell = tk.Frame(cam_labels_row, bg=C["surface"], bd=1, relief="solid")
+            cell.pack(side="left", expand=True, fill="x", padx=4)
+            tk.Label(cell, text=f"CAM {cam_id} ({cardinal})",
+                     font=FONT_SMALL, bg=C["surface"], fg=C["muted"]).pack(pady=(4, 0))
+            lbl = tk.Label(cell, text="0%", font=FONT_BIG,
+                           bg=C["surface"], fg=C["muted"])
+            lbl.pack(pady=(0, 4))
+            self._cam_conf_labels[cam_id] = lbl
 
         # Model info
         tk.Label(p, text=f"Model: {PUMP_MODEL_ID}  |  Camera: {PUMP_CAMERA}",
                  font=FONT_SMALL, bg=C["bg"], fg=C["muted"]).pack(pady=4)
-
 
     # ─── LOGS tab ───────────────────────────────────────────────────────────────
 
@@ -540,20 +727,27 @@ class WildfirePanel(tk.Tk):
                              bg=C["bg"], fg=C["muted"], bd=1, relief="solid")
         info.pack(fill="x", padx=12, pady=4)
 
-        self._lbl_cpu    = tk.Label(info, text="CPU: --",     font=FONT_BODY, bg=C["bg"], fg=C["text"], anchor="w")
-        self._lbl_temp   = tk.Label(info, text="Temp: --",    font=FONT_BODY, bg=C["bg"], fg=C["text"], anchor="w")
-        self._lbl_mem    = tk.Label(info, text="Memory: --",  font=FONT_BODY, bg=C["bg"], fg=C["text"], anchor="w")
-        self._lbl_uptime = tk.Label(info, text="Uptime: --",  font=FONT_BODY, bg=C["bg"], fg=C["text"], anchor="w")
+        self._lbl_cpu    = tk.Label(info, text="CPU: --",    font=FONT_BODY, bg=C["bg"], fg=C["text"], anchor="w")
+        self._lbl_temp   = tk.Label(info, text="Temp: --",   font=FONT_BODY, bg=C["bg"], fg=C["text"], anchor="w")
+        self._lbl_mem    = tk.Label(info, text="Memory: --", font=FONT_BODY, bg=C["bg"], fg=C["text"], anchor="w")
+        self._lbl_uptime = tk.Label(info, text="Uptime: --", font=FONT_BODY, bg=C["bg"], fg=C["text"], anchor="w")
         self._lbl_hat    = tk.Label(info,
                                     text=f"Relay HAT: {'CONNECTED' if HAT_AVAILABLE else 'SIMULATION'}",
                                     font=FONT_BODY, bg=C["bg"],
                                     fg=C["green"] if HAT_AVAILABLE else C["amber"], anchor="w")
+        # Anemometer / Frigate status rows
+        self._lbl_sys_anemo  = tk.Label(info, text="Anemometer: --",
+                                        font=FONT_BODY, bg=C["bg"], fg=C["text"], anchor="w")
+        self._lbl_sys_roboflow = tk.Label(info, text="Roboflow: --",
+                                          font=FONT_BODY, bg=C["bg"], fg=C["text"], anchor="w")
+
         for lbl in [self._lbl_cpu, self._lbl_temp, self._lbl_mem,
-                    self._lbl_uptime, self._lbl_hat]:
-            lbl.pack(fill="x", padx=10, pady=3)
+                    self._lbl_uptime, self._lbl_hat,
+                    self._lbl_sys_anemo, self._lbl_sys_roboflow]:
+            lbl.pack(fill="x", padx=10, pady=2)
 
         btn_frame = tk.Frame(p, bg=C["bg"])
-        btn_frame.pack(pady=16)
+        btn_frame.pack(pady=12)
 
         tk.Button(btn_frame, text="REBOOT Pi", font=FONT_BTN,
                   bg=C["btn_off"], fg=C["amber"],
@@ -594,25 +788,22 @@ class WildfirePanel(tk.Tk):
         self._append_log(f"[SEQ] {msg}")
 
     def _valve_toggle(self, zone_num):
-        relay_num = [RELAY_VALVE_ZONE1, RELAY_VALVE_ZONE2,
-                     RELAY_VALVE_ZONE3, RELAY_VALVE_ZONE4][zone_num - 1]
-        new_state = not relay_get(relay_num)
-        relay_set(relay_num, new_state)
+        rnum = ZONE_RELAYS[zone_num]
+        new_state = not relay_get(rnum)
+        relay_set(rnum, new_state)
         self.valve_states[zone_num].set(new_state)
         self._append_log(f"Zone {zone_num} {'OPEN' if new_state else 'CLOSED'}")
         self._update_zone_display(zone_num)
 
     def _zones_all_open(self):
-        for i, rnum in enumerate([RELAY_VALVE_ZONE1, RELAY_VALVE_ZONE2,
-                                   RELAY_VALVE_ZONE3, RELAY_VALVE_ZONE4], 1):
+        for i, rnum in ZONE_RELAYS.items():
             relay_set(rnum, True)
             self.valve_states[i].set(True)
             self._update_zone_display(i)
         self._append_log("All zones OPENED")
 
     def _zones_all_close(self):
-        for i, rnum in enumerate([RELAY_VALVE_ZONE1, RELAY_VALVE_ZONE2,
-                                   RELAY_VALVE_ZONE3, RELAY_VALVE_ZONE4], 1):
+        for i, rnum in ZONE_RELAYS.items():
             relay_set(rnum, False)
             self.valve_states[i].set(False)
             self._update_zone_display(i)
@@ -626,23 +817,72 @@ class WildfirePanel(tk.Tk):
         self._lbl_mode_big.configure(text=label, fg=C["green"] if new else C["muted"])
         self._append_log(f"Mode → {label}")
 
+        if new:
+            self._auto_ctrl.enable()
+            self._append_log("AUTO mode controller ENABLED")
+        else:
+            self._auto_ctrl.disable()
+            self._append_log("AUTO mode controller DISABLED")
+
     def _emergency_all_off(self):
         self._append_log("⚡ EMERGENCY ALL OFF triggered")
-        for i, rnum in enumerate([RELAY_VALVE_ZONE1, RELAY_VALVE_ZONE2,
-                                   RELAY_VALVE_ZONE3, RELAY_VALVE_ZONE4], 1):
+        # Disable AUTO mode first so it can't re-open valves
+        if self.mode_auto.get():
+            self.mode_auto.set(False)
+            self._auto_ctrl.disable()
+            self._lbl_mode.configure(text="MANUAL", fg=C["muted"])
+            self._lbl_mode_big.configure(text="MANUAL", fg=C["muted"])
+        for i, rnum in ZONE_RELAYS.items():
             relay_set(rnum, False)
             self.valve_states[i].set(False)
             self._update_zone_display(i)
         self._stop_pump()
         engine.stop()
 
+    # ─── AUTO mode callbacks ───────────────────────────────────────────────────
+
+    def _on_auto_state_change(self, new_state: AutoState):
+        """Called by AutoModeController on every state transition (background thread)."""
+        self.after(0, self._apply_auto_state_ui, new_state)
+
+    def _apply_auto_state_ui(self, state: AutoState):
+        """Update CONTROL tab AUTO status panel — must be called on main thread."""
+        color = AUTO_STATE_COLOR.get(state, C["muted"])
+        self._lbl_auto_state.configure(text=state.name, fg=color)
+        self._append_log(f"[AUTO] State → {state.name}")
+
+        # Sync valve display after AUTO opens/closes zones
+        for i, rnum in ZONE_RELAYS.items():
+            self.valve_states[i].set(relay_get(rnum))
+            self._update_zone_display(i)
+
+    def _on_ember_detection(self, camera_id: int, confidence: float):
+        """Called from _read_pump_output when pump.py reports an ember detection."""
+        conf_pct = confidence * 100
+        self.after(0, self._update_camera_confidence, camera_id, conf_pct)
+
+    def _update_camera_confidence(self, camera_id: int, conf_pct: float):
+        """Update per-camera confidence label on CAMERA tab."""
+        if camera_id not in self._cam_conf_labels:
+            return
+        lbl = self._cam_conf_labels[camera_id]
+        if conf_pct >= 90:
+            color = C["red"]
+        elif conf_pct >= 70:
+            color = C["amber"]
+        elif conf_pct > 0:
+            color = C["blue"]
+        else:
+            color = C["muted"]
+        lbl.configure(text=f"{conf_pct:.0f}%", fg=color)
+
     # ─── Display helpers ────────────────────────────────────────────────────────
 
     def _update_zone_display(self, zone_num):
-        on = self.valve_states[zone_num].get()
-        text   = "● OPEN"   if on else "● CLOSED"
-        color  = C["green"] if on else C["red"]
-        btn_tx = "CLOSE"    if on else "OPEN"
+        on     = self.valve_states[zone_num].get()
+        text   = "● OPEN"      if on else "● CLOSED"
+        color  = C["green"]    if on else C["red"]
+        btn_tx = "CLOSE"       if on else "OPEN"
         btn_bg = C["btn_stop"] if on else C["btn_on"]
         btn_fg = C["red"]      if on else C["green"]
 
@@ -678,6 +918,69 @@ class WildfirePanel(tk.Tk):
             lbl.configure(text="ON" if on else "OFF",
                           fg=C["green"] if on else C["red"])
 
+    def _update_auto_panel(self):
+        """Refresh the AUTO status panel on the CONTROL tab (called every tick)."""
+        # Wind
+        reading = self._anemometer.get_reading() if hasattr(self._anemometer, 'get_reading') else None
+        if reading:
+            spd  = reading.speed_mph
+            deg  = reading.direction_deg
+            card = reading.cardinal()
+            self._lbl_wind_detail.configure(
+                text=f"Wind: {spd:.1f} mph  {deg}°  ({card})",
+                fg=C["blue"])
+            self._lbl_wind.configure(
+                text=f"~ {spd:.0f} mph  {deg}°",
+                fg=C["blue"])
+        else:
+            self._lbl_wind_detail.configure(text="Wind: -- mph  --°  (--)", fg=C["muted"])
+            self._lbl_wind.configure(text="~ -- mph  --°", fg=C["muted"])
+
+        # Ember confidence bar — driven by AUTO controller's internal store
+        ember_pct = self._auto_ctrl.get_max_ember_confidence()
+        bar_w = int(190 * min(ember_pct / 100.0, 1.0))
+        bar_color = C["red"] if ember_pct >= 90 else (C["amber"] if ember_pct >= 70 else C["blue"])
+        self._ember_bar_fill.place(x=0, y=0, width=bar_w, height=12)
+        self._ember_bar_fill.configure(bg=bar_color if bar_w > 0 else C["surface"])
+        self._lbl_ember_pct.configure(
+            text=f"{ember_pct:.0f}%",
+            fg=bar_color if ember_pct > 0 else C["muted"])
+
+        # Active zone
+        zone = self._auto_ctrl._current_zone
+        cycle = self._auto_ctrl._cycle_index
+        self._lbl_active_zone.configure(
+            text=f"Zone: {zone if zone else '--'}",
+            fg=C["green"] if zone else C["muted"])
+        self._lbl_cycle.configure(
+            text=f"Cycle step: {cycle}" if self.mode_auto.get() else "Cycle: --",
+            fg=C["muted"])
+
+        # Anemometer online status
+        anemo_online = self._anemometer.is_online()
+        self._lbl_anemo_dot.configure(fg=C["green"] if anemo_online else C["red"])
+        self._lbl_anemo_status.configure(
+            text=f"Anemometer: {'ONLINE' if anemo_online else 'OFFLINE — camera fallback'}",
+            fg=C["green"] if anemo_online else C["amber"])
+        self._lbl_sys_anemo.configure(
+            text=f"Anemometer: {'ONLINE' if anemo_online else 'OFFLINE'}",
+            fg=C["green"] if anemo_online else C["red"])
+
+        # Roboflow / pump.py status
+        self._lbl_roboflow_status.configure(
+            text=f"Roboflow: {'RECEIVING' if self._roboflow_online else 'NO DATA'}",
+            fg=C["green"] if self._roboflow_online else C["red"])
+        self._lbl_sys_roboflow.configure(
+            text=f"Roboflow: {'RECEIVING' if self._roboflow_online else 'NO DATA'}",
+            fg=C["green"] if self._roboflow_online else C["red"])
+
+        # Decay camera confidence labels when no live detections
+        live_cams = {d[1] for d in self._auto_ctrl._detections
+                     if (time.time() - d[0]) < self._auto_ctrl.DETECTION_TTL}
+        for cam_id, lbl in self._cam_conf_labels.items():
+            if cam_id not in live_cams:
+                lbl.configure(text="0%", fg=C["muted"])
+
     # ─── Polling ────────────────────────────────────────────────────────────────
 
     def _start_polling(self):
@@ -689,6 +992,7 @@ class WildfirePanel(tk.Tk):
             self._lbl_time.configure(text=now.strftime("%H:%M:%S"))
             self._update_engine_display()
             self._update_relay_table()
+            self._update_auto_panel()          # NEW — refreshes wind/ember/state
             if now.second % 5 == 0:
                 self._update_sysinfo()
             if now.second % 10 == 0:
@@ -727,11 +1031,9 @@ class WildfirePanel(tk.Tk):
         except Exception:
             pass
 
-
     # ─── Pump process ───────────────────────────────────────────────────────────
 
     def _start_pump(self):
-        """Launch pump.py as a subprocess and read its stdout in a background thread."""
         try:
             env = os.environ.copy()
             env["FRIGATE_CAMERA"]   = PUMP_CAMERA
@@ -753,7 +1055,6 @@ class WildfirePanel(tk.Tk):
             self._append_log(f"Pump start failed: {e}")
 
     def _stop_pump(self):
-        """Terminate the pump subprocess cleanly."""
         if self._pump_proc and self._pump_proc.poll() is None:
             self._pump_proc.terminate()
             try:
@@ -764,7 +1065,10 @@ class WildfirePanel(tk.Tk):
         self._pump_proc = None
 
     def _read_pump_output(self):
-        """Background thread: parse JSON lines from pump stdout, update UI."""
+        """
+        Parse JSON lines from pump.py stdout.
+        Feeds ember detections directly into AutoModeController.
+        """
         try:
             for line in self._pump_proc.stdout:
                 line = line.strip()
@@ -774,20 +1078,34 @@ class WildfirePanel(tk.Tk):
                     data = json.loads(line)
                 except json.JSONDecodeError:
                     continue
+
                 event = data.get("event")
                 if event == "prediction":
                     self._pump_top  = data.get("top", "unknown")
                     self._pump_conf = float(data.get("confidence") or 0.0)
+                    self._roboflow_online = True
                     self.after(0, self._update_pump_display)
+
+                    # Feed ember detections into AUTO mode controller
+                    if self._pump_top == "ember":
+                        # Camera 1 = North (pump.py monitors tahoe_cam1)
+                        self._auto_ctrl.feed_detection(
+                            camera_id  = 1,
+                            label      = "ember",
+                            confidence = self._pump_conf,
+                        )
+                        self._on_ember_detection(1, self._pump_conf)
+
                 elif event == "error":
+                    self._roboflow_online = False
                     self._append_log(f"[PUMP] {data.get('error', 'unknown error')}")
         except Exception as e:
+            self._roboflow_online = False
             self._append_log(f"Pump reader error: {e}")
 
     def _update_pump_display(self):
-        """Update the camera tab with the latest pump prediction."""
-        top  = self._pump_top
-        conf = self._pump_conf
+        top      = self._pump_top
+        conf     = self._pump_conf
         conf_pct = f"{conf*100:.1f}%"
         if top == "ember":
             color = C["red"]
@@ -803,12 +1121,20 @@ class WildfirePanel(tk.Tk):
         if hasattr(self, "_lbl_pump_conf"):
             self._lbl_pump_conf.configure(text=f"Confidence: {conf_pct}")
 
-    def _poll_frigate(self):
-        alerts = get_frigate_stats()
-        self.after(0, self._update_frigate_display, alerts)
+        # Always update camera 1 confidence grid (pump.py monitors tahoe_cam1 = North)
+        if hasattr(self, "_cam_conf_labels"):
+            conf_display = conf * 100
+            if top == "ember":
+                cam_color = C["red"] if conf_display >= 90 else (
+                            C["amber"] if conf_display >= 70 else C["blue"])
+                self._cam_conf_labels[1].configure(
+                    text=f"{conf_display:.0f}%", fg=cam_color)
+            else:
+                # No ember — reset camera 1 to 0%
+                self._cam_conf_labels[1].configure(text="0%", fg=C["muted"])
 
-    def _update_frigate_display(self, alerts):
-        pass  # Camera tab now driven by pump.py output
+    def _poll_frigate(self):
+        pass  # Detection driven entirely by pump.py → Roboflow output
 
     # ─── Log ────────────────────────────────────────────────────────────────────
 
@@ -849,6 +1175,9 @@ class WildfirePanel(tk.Tk):
             os.system("sudo shutdown -h now")
 
     def _safe_quit(self):
+        if self.mode_auto.get():
+            self._auto_ctrl.disable()
+        self._anemometer.stop_polling()
         self._stop_pump()
         self._emergency_all_off()
         self.destroy()

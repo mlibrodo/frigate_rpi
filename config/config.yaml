@@ -6,10 +6,35 @@ cameras:
     enabled: true
     ffmpeg:
       inputs:
-        - path: rtsp://admin:Pyregon26!@192.168.1.108:554/cam/realmonitor?channel=1&subtype=1
+        - path: rtsp://admin:Pyregon26!@192.168.1.202:554/cam/realmonitor?channel=1&subtype=1
           roles:
             - detect
-        - path: rtsp://admin:Pyregon26!@192.168.1.108:554/cam/realmonitor?channel=1&subtype=0
+        - path: rtsp://admin:Pyregon26!@192.168.1.202:554/cam/realmonitor?channel=1&subtype=0
+          roles:
+            - record
+      input_args: preset-rtsp-restream
+    detect:
+      width: 704
+      height: 480
+      fps: 5
+    record:
+      enabled: true
+      retain:
+        days: 3
+        mode: motion
+    snapshots:
+      enabled: true
+      retain:
+        default: 7
+
+  tahoe_cam2:
+    enabled: true
+    ffmpeg:
+      inputs:
+        - path: rtsp://admin:Pyregon2026@192.168.1.201:554/cam/realmonitor?channel=1&subtype=1
+          roles:
+            - detect
+        - path: rtsp://admin:Pyregon2026@192.168.1.201:554/cam/realmonitor?channel=1&subtype=0
           roles:
             - record
       input_args: preset-rtsp-restream
