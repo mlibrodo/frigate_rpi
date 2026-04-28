@@ -28,6 +28,8 @@ import signal
 from datetime import datetime
 from collections import deque
 
+import web_panel as _web_panel_mod
+
 try:
     from PIL import Image, ImageTk
     PIL_AVAILABLE = True
@@ -340,6 +342,7 @@ class WildfirePanel(tk.Tk):
         self._pump_proc   = None
         self._pump_top    = "unknown"
         self._pump_conf   = 0.0
+        self._is_auto_mode = False   # thread-safe mirror of mode_auto BooleanVar
 
         # ── Sensor / AUTO mode initialisation ─────────────────────────────────
         self._init_sensors()
@@ -348,6 +351,17 @@ class WildfirePanel(tk.Tk):
         self._start_pump()
         # Fetch snapshots immediately on launch
         threading.Thread(target=self._refresh_snapshots, daemon=True).start()
+
+        # ── Web panel (FastAPI + WebSocket, daemon thread) ─────────────────────
+        self._web = _web_panel_mod.WebPanel(
+            get_state    = self._web_state,
+            engine_start = lambda: self.after(0, self._engine_start),
+            engine_stop  = lambda: self.after(0, self._engine_stop),
+            zone_toggle  = lambda z: self.after(0, self._valve_toggle, z),
+            mode_toggle  = lambda: self.after(0, self._mode_toggle),
+            all_off      = lambda: self.after(0, self._emergency_all_off),
+        )
+        self._web.start()
 
         self.bind("<Escape>", lambda e: None)
         self.protocol("WM_DELETE_WINDOW", self._safe_quit)
@@ -877,6 +891,7 @@ class WildfirePanel(tk.Tk):
     def _mode_toggle(self):
         new = not self.mode_auto.get()
         self.mode_auto.set(new)
+        self._is_auto_mode = new  # keep thread-safe mirror in sync
         label = "AUTO" if new else "MANUAL"
         self._lbl_mode.configure(text=label, fg=C["green"] if new else C["muted"])
         self._lbl_mode_big.configure(text=label, fg=C["green"] if new else C["muted"])
@@ -1061,6 +1076,30 @@ class WildfirePanel(tk.Tk):
             if cam_id not in live_cams:
                 lbl.configure(text="0%", fg=C["muted"])
 
+    # ─── Web panel state snapshot ────────────────────────────────────────────────
+
+    def _web_state(self) -> dict:
+        """Collect a JSON-serialisable state snapshot for the web dashboard."""
+        reading = self._anemometer.get_reading() if hasattr(self._anemometer, 'get_reading') else None
+        eng = engine
+        return {
+            "type":           "state",
+            "ts":             datetime.now().strftime("%H:%M:%S"),
+            "engine":         ("RUNNING"  if eng.running  else
+                               "STARTING" if eng.starting else
+                               "STOPPING" if eng.stopping else "STOPPED"),
+            "mode":           "AUTO" if self._is_auto_mode else "MANUAL",
+            "auto_state":     self._auto_ctrl.get_state().name,
+            "active_zone":    self._auto_ctrl._current_zone,
+            "zones":          {str(i): relay_get(ZONE_RELAYS[i]) for i in range(1, 5)},
+            "wind_speed":     round(reading.speed_mph, 1) if reading else None,
+            "wind_dir":       reading.direction_deg        if reading else None,
+            "wind_card":      reading.cardinal()           if reading else None,
+            "ember_pct":      round(self._auto_ctrl.get_max_ember_confidence(), 1),
+            "anemo_online":   self._anemometer.is_online(),
+            "roboflow_online": self._roboflow_online,
+        }
+
     # ─── Polling ────────────────────────────────────────────────────────────────
 
     def _start_polling(self):
@@ -1077,6 +1116,8 @@ class WildfirePanel(tk.Tk):
                 self._update_pump_display()
             if now.second % 2 == 0:
                 self._update_auto_panel()
+                if hasattr(self, '_web'):
+                    self._web.push_state()
             if now.second % 5 == 0:
                 self._update_sysinfo()
             if now.second % 10 == 0:
@@ -1286,6 +1327,8 @@ class WildfirePanel(tk.Tk):
         line = f"[{ts}] {msg}\n"
         self.log_buffer.append(line)
         log.info(msg)
+        if hasattr(self, '_web'):
+            self._web.push_event(msg)
         for widget in [self._log_text, self._mini_log]:
             try:
                 widget.configure(state="normal")

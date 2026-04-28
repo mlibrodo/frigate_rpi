@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pyregon Wildfire Defense</title>
+<style>
+  :root {
+    --bg:       #0d1117;
+    --surface:  #161b22;
+    --border:   #30363d;
+    --text:     #e6edf3;
+    --muted:    #8b949e;
+    --green:    #3fb950;
+    --red:      #f85149;
+    --amber:    #d29922;
+    --blue:     #58a6ff;
+    --btn-on:   #1a3a1a;
+    --btn-off:  #21262d;
+    --btn-stop: #3a1a1a;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: 'Courier New', monospace;
+    min-height: 100vh;
+  }
+
+  /* ── Header ── */
+  header {
+    background: #21262d;
+    padding: 0 16px;
+    height: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; z-index: 10;
+  }
+  .logo { color: var(--amber); font-size: 14px; font-weight: bold; }
+  .header-right { display: flex; align-items: center; gap: 16px; }
+  .conn-dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: var(--muted); transition: background 0.3s;
+  }
+  .conn-dot.live { background: var(--green); }
+  .conn-dot.dead { background: var(--red); }
+  #clock { color: var(--muted); font-size: 13px; }
+
+  /* ── Layout ── */
+  main {
+    padding: 12px;
+    display: grid;
+    gap: 12px;
+    grid-template-columns: 1fr;
+  }
+  @media (min-width: 640px) {
+    main { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (min-width: 1024px) {
+    main { grid-template-columns: repeat(3, 1fr); max-width: 1200px; margin: 0 auto; }
+    .wide  { grid-column: span 2; }
+    .full  { grid-column: 1 / -1; }
+  }
+
+  /* ── Cards ── */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px;
+  }
+  .card-title {
+    font-size: 11px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 1px;
+    margin-bottom: 10px;
+  }
+
+  /* ── Status labels ── */
+  .status-big {
+    font-size: 24px; font-weight: bold;
+    text-align: center; padding: 8px 0;
+  }
+  .status-dot::before { content: '● '; }
+
+  /* ── Buttons ── */
+  .btn {
+    display: block; width: 100%; padding: 10px;
+    font-family: 'Courier New', monospace;
+    font-size: 14px; font-weight: bold;
+    border: none; border-radius: 4px;
+    cursor: pointer; margin-top: 8px;
+    transition: opacity 0.15s;
+  }
+  .btn:disabled { opacity: 0.35; cursor: not-allowed; }
+  .btn:active:not(:disabled) { opacity: 0.75; }
+  .btn-green { background: var(--btn-on);  color: var(--green); }
+  .btn-red   { background: var(--btn-stop); color: var(--red);  }
+  .btn-amber { background: var(--btn-off);  color: var(--amber);}
+  .btn-blue  { background: var(--btn-off);  color: var(--blue); }
+
+  /* ── Engine card ── */
+  #engine-status { margin-bottom: 4px; }
+
+  /* ── Mode card ── */
+  #mode-label { margin-bottom: 4px; }
+
+  /* ── AUTO status card ── */
+  .auto-row {
+    display: flex; justify-content: space-between;
+    font-size: 12px; color: var(--muted);
+    margin-top: 6px;
+  }
+  .auto-row span:last-child { color: var(--blue); }
+  .ember-bar-wrap {
+    background: #21262d; border-radius: 3px;
+    height: 10px; margin-top: 8px; overflow: hidden;
+  }
+  .ember-bar-fill {
+    height: 100%; width: 0%;
+    background: var(--blue);
+    border-radius: 3px;
+    transition: width 0.4s, background 0.4s;
+  }
+  .ember-label {
+    font-size: 11px; color: var(--muted);
+    margin-top: 4px; text-align: right;
+  }
+
+  /* ── Zone cards ── */
+  .zones-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+  }
+  @media (min-width: 640px) {
+    .zones-grid { grid-template-columns: repeat(4, 1fr); }
+  }
+  .zone-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px;
+    text-align: center;
+  }
+  .zone-title { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
+  .zone-status { font-size: 14px; font-weight: bold; margin-bottom: 6px; }
+  .zone-btn {
+    width: 100%; padding: 8px 0;
+    font-family: 'Courier New', monospace;
+    font-size: 12px; font-weight: bold;
+    border: none; border-radius: 4px; cursor: pointer;
+  }
+  .zone-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+  /* ── Emergency button ── */
+  .emergency-btn {
+    width: 100%; padding: 20px;
+    background: var(--btn-stop); color: var(--red);
+    font-family: 'Courier New', monospace;
+    font-size: 20px; font-weight: bold;
+    border: 2px solid #5a1a1a; border-radius: 6px;
+    cursor: pointer; letter-spacing: 2px;
+    transition: background 0.15s;
+  }
+  .emergency-btn:hover { background: #4a1a1a; }
+  .emergency-btn:active { background: #6a1a1a; }
+
+  /* ── Event log ── */
+  .event-log {
+    max-height: 220px;
+    overflow-y: auto;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .event-log::-webkit-scrollbar { width: 4px; }
+  .event-log::-webkit-scrollbar-thumb { background: var(--border); }
+  .event-entry { padding: 3px 0; border-bottom: 1px solid #21262d; }
+  .event-ts { color: var(--border); margin-right: 6px; }
+
+  /* ── Sensor row ── */
+  .sensor-row {
+    display: flex; gap: 16px; flex-wrap: wrap;
+    font-size: 12px; margin-top: 6px;
+  }
+  .sensor-item { display: flex; flex-direction: column; }
+  .sensor-label { color: var(--muted); font-size: 10px; text-transform: uppercase; }
+  .sensor-value { color: var(--blue); font-size: 15px; font-weight: bold; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">◈ PYREGON WILDFIRE DEFENSE</div>
+  <div class="header-right">
+    <span id="clock">--:--:--</span>
+    <div class="conn-dot" id="conn-dot" title="WebSocket status"></div>
+  </div>
+</header>
+
+<main>
+
+  <!-- Engine card -->
+  <div class="card">
+    <div class="card-title">Engine</div>
+    <div class="status-big status-dot" id="engine-status" style="color:var(--red)">STOPPED</div>
+    <button class="btn btn-green" id="btn-engine-start" onclick="cmd('/api/engine/start')">▶  START ENGINE</button>
+    <button class="btn btn-red"   id="btn-engine-stop"  onclick="cmd('/api/engine/stop')">■  STOP ENGINE</button>
+  </div>
+
+  <!-- Mode card -->
+  <div class="card">
+    <div class="card-title">Mode</div>
+    <div class="status-big" id="mode-label" style="color:var(--muted)">MANUAL</div>
+    <button class="btn btn-amber" onclick="cmd('/api/mode/toggle')">TOGGLE MODE</button>
+  </div>
+
+  <!-- AUTO status card -->
+  <div class="card">
+    <div class="card-title">AUTO Status</div>
+    <div class="status-big" id="auto-state" style="color:var(--muted)">IDLE</div>
+    <div class="sensor-row">
+      <div class="sensor-item">
+        <span class="sensor-label">Wind</span>
+        <span class="sensor-value" id="wind-speed">--</span>
+      </div>
+      <div class="sensor-item">
+        <span class="sensor-label">Direction</span>
+        <span class="sensor-value" id="wind-dir">--</span>
+      </div>
+      <div class="sensor-item">
+        <span class="sensor-label">Anemometer</span>
+        <span class="sensor-value" id="anemo-status" style="color:var(--muted)">--</span>
+      </div>
+    </div>
+    <div style="margin-top:10px; font-size:11px; color:var(--muted)">Ember confidence</div>
+    <div class="ember-bar-wrap">
+      <div class="ember-bar-fill" id="ember-bar"></div>
+    </div>
+    <div class="ember-label" id="ember-pct">0%</div>
+    <div class="auto-row">
+      <span>Roboflow</span>
+      <span id="roboflow-status">--</span>
+    </div>
+    <div class="auto-row">
+      <span>Active zone</span>
+      <span id="active-zone">--</span>
+    </div>
+  </div>
+
+  <!-- Zones -->
+  <div class="card full">
+    <div class="card-title">Irrigation Zones</div>
+    <div class="zones-grid">
+      <div class="zone-card" id="zone-card-1">
+        <div class="zone-title">Zone 1 · North</div>
+        <div class="zone-status" id="zone-status-1" style="color:var(--red)">● CLOSED</div>
+        <button class="zone-btn btn-green" id="zone-btn-1" onclick="cmd('/api/zone/1/toggle')">OPEN</button>
+      </div>
+      <div class="zone-card" id="zone-card-2">
+        <div class="zone-title">Zone 2 · East</div>
+        <div class="zone-status" id="zone-status-2" style="color:var(--red)">● CLOSED</div>
+        <button class="zone-btn btn-green" id="zone-btn-2" onclick="cmd('/api/zone/2/toggle')">OPEN</button>
+      </div>
+      <div class="zone-card" id="zone-card-3">
+        <div class="zone-title">Zone 3 · South</div>
+        <div class="zone-status" id="zone-status-3" style="color:var(--red)">● CLOSED</div>
+        <button class="zone-btn btn-green" id="zone-btn-3" onclick="cmd('/api/zone/3/toggle')">OPEN</button>
+      </div>
+      <div class="zone-card" id="zone-card-4">
+        <div class="zone-title">Zone 4 · West</div>
+        <div class="zone-status" id="zone-status-4" style="color:var(--red)">● CLOSED</div>
+        <button class="zone-btn btn-green" id="zone-btn-4" onclick="cmd('/api/zone/4/toggle')">OPEN</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Emergency -->
+  <div class="full">
+    <button class="emergency-btn" onclick="emergency()">⚡  EMERGENCY ALL OFF</button>
+  </div>
+
+  <!-- Event log -->
+  <div class="card full">
+    <div class="card-title">Recent Events</div>
+    <div class="event-log" id="event-log"></div>
+  </div>
+
+</main>
+
+<script>
+// ── WebSocket with auto-reconnect ─────────────────────────────────────────────
+const dot   = document.getElementById('conn-dot');
+const clock = document.getElementById('clock');
+let ws, reconnectDelay = 1000;
+
+function connect() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${proto}//${location.host}/ws`);
+
+  ws.onopen = () => {
+    dot.className = 'conn-dot live';
+    reconnectDelay = 1000;
+  };
+
+  ws.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    if (data.type === 'state') applyState(data);
+    else if (data.type === 'event') appendEvent(data.ts, data.msg);
+  };
+
+  ws.onclose = ws.onerror = () => {
+    dot.className = 'conn-dot dead';
+    setTimeout(connect, reconnectDelay);
+    reconnectDelay = Math.min(reconnectDelay * 2, 30000);
+  };
+}
+connect();
+
+// Keep local clock ticking independently of server
+setInterval(() => {
+  clock.textContent = new Date().toLocaleTimeString('en-US', {hour12: false});
+}, 1000);
+
+// ── State rendering ───────────────────────────────────────────────────────────
+const C = {
+  green: '#3fb950', red: '#f85149', amber: '#d29922',
+  blue: '#58a6ff', muted: '#8b949e',
+};
+const AUTO_STATE_COLOR = {
+  IDLE: C.muted, WATCHING: C.amber, STARTING: C.amber,
+  PHASE1: C.blue, CYCLING: C.green, CLEARING: C.amber, STOPPING: C.red,
+};
+
+function applyState(s) {
+  // Engine
+  const engineColors = { RUNNING: C.green, STARTING: C.amber, STOPPING: C.amber, STOPPED: C.red };
+  set('engine-status', '● ' + s.engine, engineColors[s.engine] || C.muted);
+  id('btn-engine-start').disabled = s.engine !== 'STOPPED';
+  id('btn-engine-stop').disabled  = s.engine !== 'RUNNING';
+
+  // Mode
+  const isAuto = s.mode === 'AUTO';
+  set('mode-label', s.mode, isAuto ? C.green : C.muted);
+
+  // AUTO state
+  set('auto-state', s.auto_state, AUTO_STATE_COLOR[s.auto_state] || C.muted);
+
+  // Wind
+  id('wind-speed').textContent = s.wind_speed != null ? s.wind_speed + ' mph' : '--';
+  id('wind-dir').textContent   = s.wind_dir   != null ? s.wind_dir + '° ' + (s.wind_card || '') : '--';
+  id('anemo-status').textContent = s.anemo_online ? 'ONLINE' : 'OFFLINE';
+  id('anemo-status').style.color = s.anemo_online ? C.green : C.red;
+
+  // Ember bar
+  const pct   = Math.min(s.ember_pct || 0, 100);
+  const barClr = pct >= 90 ? C.red : pct >= 70 ? C.amber : C.blue;
+  id('ember-bar').style.width      = pct + '%';
+  id('ember-bar').style.background = pct > 0 ? barClr : '#21262d';
+  id('ember-pct').textContent      = pct.toFixed(0) + '%';
+  id('ember-pct').style.color      = pct > 0 ? barClr : C.muted;
+
+  // Roboflow
+  const rfOk = s.roboflow_online;
+  id('roboflow-status').textContent = rfOk ? 'RECEIVING' : 'NO DATA';
+  id('roboflow-status').style.color = rfOk ? C.green : C.red;
+
+  // Active zone
+  id('active-zone').textContent = s.active_zone ? 'Zone ' + s.active_zone : '--';
+  id('active-zone').style.color = s.active_zone ? C.green : C.muted;
+
+  // Zones
+  for (let i = 1; i <= 4; i++) {
+    const open = s.zones && s.zones[String(i)];
+    set('zone-status-' + i, open ? '● OPEN' : '● CLOSED', open ? C.green : C.red);
+    const btn = id('zone-btn-' + i);
+    btn.textContent       = open ? 'CLOSE' : 'OPEN';
+    btn.style.background  = open ? '#3a1a1a' : '#1a3a1a';
+    btn.style.color       = open ? C.red : C.green;
+  }
+}
+
+// ── Event log ─────────────────────────────────────────────────────────────────
+const MAX_LOG_ENTRIES = 100;
+const logEl = document.getElementById('event-log');
+
+function appendEvent(ts, msg) {
+  const e = document.createElement('div');
+  e.className = 'event-entry';
+  e.innerHTML = `<span class="event-ts">[${ts}]</span>${esc(msg)}`;
+  logEl.appendChild(e);
+  // Trim old entries
+  while (logEl.children.length > MAX_LOG_ENTRIES) logEl.removeChild(logEl.firstChild);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+// ── Commands ──────────────────────────────────────────────────────────────────
+async function cmd(endpoint) {
+  try {
+    const r = await fetch(endpoint, { method: 'POST' });
+    if (!r.ok) console.warn('Command failed', endpoint, r.status);
+  } catch (err) {
+    console.error('Command error', endpoint, err);
+  }
+}
+
+function emergency() {
+  if (confirm('EMERGENCY ALL OFF — shut down engine and close all zones?')) {
+    cmd('/api/emergency');
+  }
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function id(i) { return document.getElementById(i); }
+function set(i, text, color) {
+  const el = id(i);
+  if (el.textContent !== text) el.textContent = text;
+  if (color && el.style.color !== color) el.style.color = color;
+}
+function esc(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+</script>
+</body>
+</html>
