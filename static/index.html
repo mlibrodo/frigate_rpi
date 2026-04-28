@@ -442,7 +442,7 @@
   <div id="map-container"></div>
 </div>
 
-<script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDJDMRl8v6FAo3BmSPbMySoytrXr5Z2l2A"></script>
+<script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDJDMRl8v6FAo3BmSPbMySoytrXr5Z2l2A&loading=async" async defer></script>
 <script>
 // ── WebSocket with auto-reconnect ─────────────────────────────────────────────
 const dot   = document.getElementById('conn-dot');
@@ -594,6 +594,12 @@ let _mapMarkers = [];
 const SP_COLORS = ['#58a6ff', '#3fb950', '#d29922', '#f85149'];
 
 async function initMap() {
+  if (typeof google === 'undefined' || !google.maps) {
+    id('map-no-coords').style.display = 'block';
+    id('map-no-coords').textContent = 'Google Maps failed to load. Check API key or network.';
+    id('map-container').style.display = 'none';
+    return;
+  }
   const zones = await fetch('/api/settings/zones').then(r => r.json());
   const configured = zones.filter(z => z.lat != null && z.lon != null);
 
