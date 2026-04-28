@@ -23,6 +23,8 @@ import os
 import subprocess
 import logging
 import io
+import atexit
+import signal
 from datetime import datetime
 from collections import deque
 
@@ -958,6 +960,10 @@ class WildfirePanel(tk.Tk):
                 text=f"Zone {zone_num}: {'OPEN' if on else 'CLOSED'}", fg=color)
 
     def _update_engine_display(self):
+        state = (engine.running, engine.starting, engine.stopping)
+        if state == getattr(self, "_prev_engine_state", None):
+            return
+        self._prev_engine_state = state
         if engine.running:
             self._lbl_engine_status.configure(text="● RUNNING", fg=C["green"])
             self._btn_engine_start.configure(state="disabled")
@@ -976,66 +982,77 @@ class WildfirePanel(tk.Tk):
             self._btn_engine_stop.configure(state="normal")
 
     def _update_relay_table(self):
+        snapshot = {rnum: relay_get(rnum) for rnum in self._relay_state_labels}
+        if snapshot == getattr(self, "_prev_relay_snapshot", None):
+            return
+        self._prev_relay_snapshot = snapshot
         for rnum, lbl in self._relay_state_labels.items():
-            on = relay_get(rnum)
+            on = snapshot[rnum]
             lbl.configure(text="ON" if on else "OFF",
                           fg=C["green"] if on else C["red"])
 
     def _update_auto_panel(self):
-        """Refresh the AUTO status panel on the CONTROL tab (called every tick)."""
-        # Wind
+        """Refresh the AUTO status panel on the CONTROL tab (called every 2 s)."""
+        # Wind — only reconfigure labels when the displayed text changes
         reading = self._anemometer.get_reading() if hasattr(self._anemometer, 'get_reading') else None
         if reading:
-            spd  = reading.speed_mph
-            deg  = reading.direction_deg
-            card = reading.cardinal()
-            self._lbl_wind_detail.configure(
-                text=f"Wind: {spd:.1f} mph  {deg}°  ({card})",
-                fg=C["blue"])
-            self._lbl_wind.configure(
-                text=f"~ {spd:.0f} mph  {deg}°",
-                fg=C["blue"])
+            wind_detail = f"Wind: {reading.speed_mph:.1f} mph  {reading.direction_deg}°  ({reading.cardinal()})"
+            wind_hdr    = f"~ {reading.speed_mph:.0f} mph  {reading.direction_deg}°"
+            wind_fg     = C["blue"]
         else:
-            self._lbl_wind_detail.configure(text="Wind: -- mph  --°  (--)", fg=C["muted"])
-            self._lbl_wind.configure(text="~ -- mph  --°", fg=C["muted"])
+            wind_detail = "Wind: -- mph  --°  (--)"
+            wind_hdr    = "~ -- mph  --°"
+            wind_fg     = C["muted"]
+        if wind_detail != getattr(self, "_prev_wind_detail", None):
+            self._lbl_wind_detail.configure(text=wind_detail, fg=wind_fg)
+            self._lbl_wind.configure(text=wind_hdr, fg=wind_fg)
+            self._prev_wind_detail = wind_detail
 
-        # Ember confidence bar — driven by AUTO controller's internal store
+        # Ember confidence bar
         ember_pct = self._auto_ctrl.get_max_ember_confidence()
-        bar_w = int(190 * min(ember_pct / 100.0, 1.0))
-        bar_color = C["red"] if ember_pct >= 90 else (C["amber"] if ember_pct >= 70 else C["blue"])
-        self._ember_bar_fill.place(x=0, y=0, width=bar_w, height=12)
-        self._ember_bar_fill.configure(bg=bar_color if bar_w > 0 else C["surface"])
-        self._lbl_ember_pct.configure(
-            text=f"{ember_pct:.0f}%",
-            fg=bar_color if ember_pct > 0 else C["muted"])
+        if ember_pct != getattr(self, "_prev_ember_pct", None):
+            bar_w     = int(190 * min(ember_pct / 100.0, 1.0))
+            bar_color = C["red"] if ember_pct >= 90 else (C["amber"] if ember_pct >= 70 else C["blue"])
+            self._ember_bar_fill.place(x=0, y=0, width=bar_w, height=12)
+            self._ember_bar_fill.configure(bg=bar_color if bar_w > 0 else C["surface"])
+            self._lbl_ember_pct.configure(
+                text=f"{ember_pct:.0f}%",
+                fg=bar_color if ember_pct > 0 else C["muted"])
+            self._prev_ember_pct = ember_pct
 
-        # Active zone
-        zone = self._auto_ctrl._current_zone
+        # Active zone / cycle
+        zone  = self._auto_ctrl._current_zone
         cycle = self._auto_ctrl._cycle_index
-        self._lbl_active_zone.configure(
-            text=f"Zone: {zone if zone else '--'}",
-            fg=C["green"] if zone else C["muted"])
-        self._lbl_cycle.configure(
-            text=f"Cycle step: {cycle}" if self.mode_auto.get() else "Cycle: --",
-            fg=C["muted"])
+        zone_text  = f"Zone: {zone if zone else '--'}"
+        cycle_text = f"Cycle step: {cycle}" if self.mode_auto.get() else "Cycle: --"
+        if zone_text != getattr(self, "_prev_zone_text", None):
+            self._lbl_active_zone.configure(text=zone_text, fg=C["green"] if zone else C["muted"])
+            self._prev_zone_text = zone_text
+        if cycle_text != getattr(self, "_prev_cycle_text", None):
+            self._lbl_cycle.configure(text=cycle_text, fg=C["muted"])
+            self._prev_cycle_text = cycle_text
 
         # Anemometer online status
         anemo_online = self._anemometer.is_online()
-        self._lbl_anemo_dot.configure(fg=C["green"] if anemo_online else C["red"])
-        self._lbl_anemo_status.configure(
-            text=f"Anemometer: {'ONLINE' if anemo_online else 'OFFLINE — camera fallback'}",
-            fg=C["green"] if anemo_online else C["amber"])
-        self._lbl_sys_anemo.configure(
-            text=f"Anemometer: {'ONLINE' if anemo_online else 'OFFLINE'}",
-            fg=C["green"] if anemo_online else C["red"])
+        if anemo_online != getattr(self, "_prev_anemo_online", None):
+            self._lbl_anemo_dot.configure(fg=C["green"] if anemo_online else C["red"])
+            self._lbl_anemo_status.configure(
+                text=f"Anemometer: {'ONLINE' if anemo_online else 'OFFLINE — camera fallback'}",
+                fg=C["green"] if anemo_online else C["amber"])
+            self._lbl_sys_anemo.configure(
+                text=f"Anemometer: {'ONLINE' if anemo_online else 'OFFLINE'}",
+                fg=C["green"] if anemo_online else C["red"])
+            self._prev_anemo_online = anemo_online
 
         # Roboflow / pump.py status
-        self._lbl_roboflow_status.configure(
-            text=f"Roboflow: {'RECEIVING' if self._roboflow_online else 'NO DATA'}",
-            fg=C["green"] if self._roboflow_online else C["red"])
-        self._lbl_sys_roboflow.configure(
-            text=f"Roboflow: {'RECEIVING' if self._roboflow_online else 'NO DATA'}",
-            fg=C["green"] if self._roboflow_online else C["red"])
+        if self._roboflow_online != getattr(self, "_prev_roboflow_online", None):
+            self._lbl_roboflow_status.configure(
+                text=f"Roboflow: {'RECEIVING' if self._roboflow_online else 'NO DATA'}",
+                fg=C["green"] if self._roboflow_online else C["red"])
+            self._lbl_sys_roboflow.configure(
+                text=f"Roboflow: {'RECEIVING' if self._roboflow_online else 'NO DATA'}",
+                fg=C["green"] if self._roboflow_online else C["red"])
+            self._prev_roboflow_online = self._roboflow_online
 
         # Decay camera confidence labels when no live detections
         live_cams = {d[1] for d in self._auto_ctrl._detections
@@ -1055,7 +1072,11 @@ class WildfirePanel(tk.Tk):
             self._lbl_time.configure(text=now.strftime("%H:%M:%S"))
             self._update_engine_display()
             self._update_relay_table()
-            self._update_auto_panel()          # NEW — refreshes wind/ember/state
+            if getattr(self, "_pump_display_dirty", False):
+                self._pump_display_dirty = False
+                self._update_pump_display()
+            if now.second % 2 == 0:
+                self._update_auto_panel()
             if now.second % 5 == 0:
                 self._update_sysinfo()
             if now.second % 10 == 0:
@@ -1069,10 +1090,14 @@ class WildfirePanel(tk.Tk):
 
     def _update_sysinfo(self):
         try:
-            cpu = subprocess.check_output(
-                "top -bn1 | grep 'Cpu(s)' | awk '{print $2+$4}'",
-                shell=True, text=True).strip()
-            self._lbl_cpu.configure(text=f"CPU: {cpu}%")
+            with open("/proc/stat") as f:
+                fields = list(map(int, f.readline().split()[1:]))
+            idle, total = fields[3], sum(fields)
+            prev = getattr(self, "_cpu_prev", (idle, total))
+            d_idle = idle - prev[0]; d_total = total - prev[1]
+            cpu_pct = 100.0 * (1.0 - d_idle / d_total) if d_total else 0.0
+            self._cpu_prev = (idle, total)
+            self._lbl_cpu.configure(text=f"CPU: {cpu_pct:.1f}%")
         except Exception:
             pass
         try:
@@ -1084,15 +1109,23 @@ class WildfirePanel(tk.Tk):
         except Exception:
             pass
         try:
-            mem = subprocess.check_output(
-                "free -m | awk 'NR==2{printf \"%s/%sMB\", $3,$2}'",
-                shell=True, text=True).strip()
-            self._lbl_mem.configure(text=f"Memory: {mem}")
+            info = {}
+            with open("/proc/meminfo") as f:
+                for line in f:
+                    k, v = line.split(":")
+                    info[k.strip()] = int(v.split()[0])
+            total_mb = info["MemTotal"] // 1024
+            used_mb  = total_mb - info["MemAvailable"] // 1024
+            self._lbl_mem.configure(text=f"Memory: {used_mb}/{total_mb}MB")
         except Exception:
             pass
         try:
-            uptime = subprocess.check_output("uptime -p", shell=True, text=True).strip()
-            self._lbl_uptime.configure(text=f"Uptime: {uptime}")
+            with open("/proc/uptime") as f:
+                secs = int(float(f.read().split()[0]))
+            h, m = divmod(secs // 60, 60)
+            d, h = divmod(h, 24)
+            parts = ([f"{d}d"] if d else []) + ([f"{h}h"] if h else []) + [f"{m}m"]
+            self._lbl_uptime.configure(text="Uptime: up " + " ".join(parts))
         except Exception:
             pass
 
@@ -1101,7 +1134,7 @@ class WildfirePanel(tk.Tk):
     def _start_pump(self):
         try:
             env = os.environ.copy()
-            env["FRIGATE_CAMERA"]   = PUMP_CAMERA
+            env["FRIGATE_CAMERAS"]  = PUMP_CAMERA
             env["ROBOFLOW_API_KEY"] = PUMP_API_KEY
             env["MODEL_ID"]         = PUMP_MODEL_ID
             env["PUMP_FPS"]         = PUMP_FPS
@@ -1114,6 +1147,7 @@ class WildfirePanel(tk.Tk):
                 text=True,
                 bufsize=1,
             )
+            atexit.register(self._stop_pump)  # ensure cleanup on any exit
             threading.Thread(target=self._read_pump_output, daemon=True).start()
             self._append_log("Pump started (tahoe_cam1 → Roboflow)")
         except Exception as e:
@@ -1134,6 +1168,8 @@ class WildfirePanel(tk.Tk):
         Parse JSON lines from pump.py stdout.
         Feeds ember detections directly into AutoModeController.
         """
+        self._pump_display_dirty = False
+        self._last_pump_error_log = 0.0
         try:
             for line in self._pump_proc.stdout:
                 line = line.strip()
@@ -1149,7 +1185,7 @@ class WildfirePanel(tk.Tk):
                     self._pump_top  = data.get("top", "unknown")
                     self._pump_conf = float(data.get("confidence") or 0.0)
                     self._roboflow_online = True
-                    self.after(0, self._update_pump_display)
+                    self._pump_display_dirty = True  # flushed by _tick, not after(0)
 
                     # Feed ember detections into AUTO mode controller
                     if self._pump_top == "ember":
@@ -1163,68 +1199,82 @@ class WildfirePanel(tk.Tk):
 
                 elif event == "error":
                     self._roboflow_online = False
-                    self._append_log(f"[PUMP] {data.get('error', 'unknown error')}")
+                    now = time.time()
+                    if now - self._last_pump_error_log >= 10:
+                        self._last_pump_error_log = now
+                        msg = f"[PUMP] {data.get('error', 'unknown error')}"
+                        self.after(0, self._append_log, msg)
         except Exception as e:
             self._roboflow_online = False
-            self._append_log(f"Pump reader error: {e}")
+            self.after(0, self._append_log, f"Pump reader error: {e}")
 
     def _update_pump_display(self):
         top      = self._pump_top
         conf     = self._pump_conf
         conf_pct = f"{conf*100:.1f}%"
         if top == "ember":
-            color = C["red"]
-            icon  = "🔥 EMBER DETECTED"
+            color = C["red"];   icon = "🔥 EMBER DETECTED"
         elif top == "no_ember":
-            color = C["green"]
-            icon  = "✓  No Ember"
+            color = C["green"]; icon = "✓  No Ember"
         else:
-            color = C["muted"]
-            icon  = "?  Unknown"
-        if hasattr(self, "_lbl_pump_result"):
-            self._lbl_pump_result.configure(text=icon, fg=color)
-        if hasattr(self, "_lbl_pump_conf"):
-            self._lbl_pump_conf.configure(text=f"Confidence: {conf_pct}")
+            color = C["muted"]; icon = "?  Unknown"
 
-        # Always update camera 1 confidence grid (pump.py monitors tahoe_cam1 = North)
+        if hasattr(self, "_lbl_pump_result"):
+            if (icon, color) != getattr(self, "_prev_pump_result", None):
+                self._lbl_pump_result.configure(text=icon, fg=color)
+                self._prev_pump_result = (icon, color)
+        if hasattr(self, "_lbl_pump_conf"):
+            if conf_pct != getattr(self, "_prev_pump_conf_pct", None):
+                self._lbl_pump_conf.configure(text=f"Confidence: {conf_pct}")
+                self._prev_pump_conf_pct = conf_pct
+
         if hasattr(self, "_cam_conf_labels"):
             conf_display = conf * 100
             if top == "ember":
                 cam_color = C["red"] if conf_display >= 90 else (
                             C["amber"] if conf_display >= 70 else C["blue"])
-                self._cam_conf_labels[1].configure(
-                    text=f"{conf_display:.0f}%", fg=cam_color)
+                new_cam = (f"{conf_display:.0f}%", cam_color)
             else:
-                # No ember — reset camera 1 to 0%
-                self._cam_conf_labels[1].configure(text="0%", fg=C["muted"])
+                new_cam = ("0%", C["muted"])
+            if new_cam != getattr(self, "_prev_cam1_conf", None):
+                self._cam_conf_labels[1].configure(text=new_cam[0], fg=new_cam[1])
+                self._prev_cam1_conf = new_cam
 
     def _refresh_snapshots(self):
-        """Fetch latest snapshot from each camera — runs in background thread."""
+        """Fetch and decode snapshots in background; hand PIL Images to main thread."""
         IMG_W, IMG_H = 168, 110
+        updates = []
         for cam_name, _ in CAMERAS:
             jpeg = fetch_camera_snapshot(cam_name)
-            self.after(0, self._update_cam_image, cam_name, jpeg, IMG_W, IMG_H)
+            pil_img = None
+            if jpeg and PIL_AVAILABLE:
+                try:
+                    pil_img = Image.open(io.BytesIO(jpeg)).resize(
+                        (IMG_W, IMG_H), Image.LANCZOS)
+                except Exception:
+                    pass
+            updates.append((cam_name, pil_img, bool(jpeg)))
         ts = datetime.now().strftime("%H:%M:%S")
-        self.after(0, lambda: self._lbl_snap_time.configure(text=f"Updated {ts}"))
+        self.after(0, self._apply_snapshots, updates, IMG_W, IMG_H, ts)
 
-    def _update_cam_image(self, cam_name, jpeg_bytes, w, h):
-        """Update a single camera image label — must run on main thread."""
-        lbl = self._cam_image_labels.get(cam_name)
-        if not lbl:
-            return
-        if jpeg_bytes and PIL_AVAILABLE:
-            try:
-                img = Image.open(io.BytesIO(jpeg_bytes))
-                img = img.resize((w, h), Image.LANCZOS)
-                photo = ImageTk.PhotoImage(img)
-                self._cam_photoref[cam_name] = photo  # prevent GC
-                lbl.configure(image=photo, text="", width=w, height=h)
-            except Exception:
-                lbl.configure(image="", text="Error", fg=C["red"])
-        elif jpeg_bytes and not PIL_AVAILABLE:
-            lbl.configure(image="", text="Install Pillow", fg=C["amber"])
-        else:
-            lbl.configure(image="", text="No feed", fg=C["muted"])
+    def _apply_snapshots(self, updates, w, h, ts):
+        """Apply pre-decoded PIL images on the main thread (PhotoImage must be main-thread)."""
+        for cam_name, pil_img, had_jpeg in updates:
+            lbl = self._cam_image_labels.get(cam_name)
+            if not lbl:
+                continue
+            if pil_img:
+                try:
+                    photo = ImageTk.PhotoImage(pil_img)
+                    self._cam_photoref[cam_name] = photo
+                    lbl.configure(image=photo, text="", width=w, height=h)
+                except Exception:
+                    lbl.configure(image="", text="Error", fg=C["red"])
+            elif had_jpeg and not PIL_AVAILABLE:
+                lbl.configure(image="", text="Install Pillow", fg=C["amber"])
+            else:
+                lbl.configure(image="", text="No feed", fg=C["muted"])
+        self._lbl_snap_time.configure(text=f"Updated {ts}")
 
     def _poll_frigate(self):
         pass  # Detection driven entirely by pump.py → Roboflow output
@@ -1240,6 +1290,9 @@ class WildfirePanel(tk.Tk):
             try:
                 widget.configure(state="normal")
                 widget.insert("end", line)
+                n = int(widget.index("end-1c").split(".")[0])
+                if n > 120:
+                    widget.delete("1.0", f"{n - 100}.0")
                 widget.see("end")
                 widget.configure(state="disabled")
             except Exception:

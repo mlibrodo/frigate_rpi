@@ -1,6 +1,9 @@
 """
 auto_mode.py — Pyregon AUTO Mode State Machine
 Handles ember detection → engine start → zone sequencing → auto-stop.
+
+Detection feed: pump.py (Roboflow) pushes ember confidence into
+AutoModeController.feed_detection() — no external client needed.
 """
 
 import threading
@@ -179,17 +182,25 @@ class AutoModeController:
       - anemometer:       object with get_wind_speed() → float (mph),
                           get_wind_direction() → float (degrees, 0=N),
                           is_online() → bool
-      - frigate_client:   object with get_detections() → list of
-                          {"camera_id": int, "label": str, "confidence": float}
+
+    Detection feed:
+      Call feed_detection(camera_id, label, confidence) directly from
+      pump.py / Roboflow output. No external MQTT client needed.
     """
 
-    def __init__(self, relay_controller, anemometer, frigate_client,
+    DETECTION_TTL = 5.0   # seconds before a detection expires
+
+    def __init__(self, relay_controller, anemometer,
                  property_center=None, on_state_change=None):
         self.relay = relay_controller
         self.anemometer = anemometer
-        self.frigate = frigate_client
         self.property_center = property_center or {"lat": 38.933, "lon": -119.984}
         self.on_state_change = on_state_change  # callback(AutoState)
+
+        # Internal detection store: list of [timestamp, camera_id, label, confidence]
+        self._detections      = []
+        self._detection_lock  = threading.Lock()
+        self._last_confidence = 0.0   # most recent ember confidence (0–100)
 
         self.camera_tracker = CameraConfidenceTracker()
         self.alerter = AlertInterface()
@@ -235,10 +246,37 @@ class AutoModeController:
     def get_state(self):
         return self._state
 
-    def feed_camera_detection(self, camera_id, label, confidence):
-        """Called by Frigate integration whenever a detection event arrives."""
-        if label.lower() in ("ember", "fire", "smoke"):
+    def feed_detection(self, camera_id: int, label: str, confidence: float):
+        """
+        Push a detection from pump.py / Roboflow into the AUTO mode engine.
+        Call this from _read_pump_output() in control_panel.py.
+
+        confidence: 0.0–1.0 (raw Roboflow score)
+        """
+        label = label.lower()
+        now = time.time()
+        with self._detection_lock:
+            # Remove stale entries for same camera+label, add fresh one
+            self._detections = [
+                d for d in self._detections
+                if not (d[1] == camera_id and d[2] == label)
+                and (now - d[0]) < self.DETECTION_TTL
+            ]
+            self._detections.append([now, camera_id, label, confidence])
+            self._last_confidence = confidence * 100.0
+
+        # Also feed camera confidence tracker for anemometer fallback
+        if label in ("ember", "fire", "smoke"):
             self.camera_tracker.record(camera_id, confidence)
+
+    def get_max_ember_confidence(self) -> float:
+        """Returns highest live ember confidence (0–100%). Used by UI."""
+        now = time.time()
+        with self._detection_lock:
+            live = [d[3] for d in self._detections
+                    if (now - d[0]) < self.DETECTION_TTL
+                    and d[2] in ("ember", "fire", "smoke")]
+        return max(live) * 100.0 if live else 0.0
 
     # ── Internal Loop ─────────────────────────────────────────────────────────
 
@@ -253,13 +291,7 @@ class AutoModeController:
         logger.info("AUTO mode monitoring loop stopped.")
 
     def _tick(self):
-        detections = self.frigate.get_detections()
-        ember_confidence = self._max_ember_confidence(detections)
-
-        # Feed camera tracker for anemometer fallback
-        for d in detections:
-            if d.get("label", "").lower() in ("ember", "fire", "smoke"):
-                self.camera_tracker.record(d["camera_id"], d["confidence"])
+        ember_confidence = self.get_max_ember_confidence()
 
         # Check anemometer health
         self._check_anemometer_health()
@@ -298,12 +330,6 @@ class AutoModeController:
 
         elif self._state == AutoState.CLEARING:
             pass  # Handled in stop sequence thread
-
-    def _max_ember_confidence(self, detections):
-        ember_labels = {"ember", "fire", "smoke"}
-        confs = [d["confidence"] for d in detections
-                 if d.get("label", "").lower() in ember_labels]
-        return max(confs) * 100 if confs else 0.0
 
     # ── Anemometer Health ──────────────────────────────────────────────────────
 

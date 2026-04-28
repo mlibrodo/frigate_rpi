@@ -12,7 +12,7 @@ What it does
 
 Env vars
   ROBOFLOW_API_KEY    required
-  MODEL_ID            default: ember-training-poc/2          (dataset/version)
+  MODEL_ID            default: ember-training-poc/1          (dataset/version)
   ROBOFLOW_URL        default: http://127.0.0.1:9001
   FRIGATE_URL         default: http://192.168.1.102:5000
   FRIGATE_CAMERAS     default: tahoe_cam1,tahoe_cam2  (comma-separated)
@@ -106,7 +106,7 @@ def parse_config() -> Config:
         frigate_url=os.environ.get("FRIGATE_URL", "http://192.168.1.102:5000").rstrip("/"),
         frigate_cameras=cameras,
         roboflow_url=os.environ.get("ROBOFLOW_URL", "http://127.0.0.1:9001").rstrip("/"),
-        model_id=os.environ.get("MODEL_ID", "ember-training-poc/2").strip("/"),
+        model_id=os.environ.get("MODEL_ID", "ember-training-poc/1").strip("/"),
         api_key=api_key,
         fps=fps,
         min_interval_s=min_interval_s,
