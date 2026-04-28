@@ -25,6 +25,9 @@ from pathlib import Path
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
+from fastapi.exceptions import RequestValidationError
+from pydantic import BaseModel, confloat
+from config import config as _cfg
 
 log = logging.getLogger("web_panel")
 
@@ -139,6 +142,28 @@ class WebPanel:
         @app.post("/api/emergency")
         async def api_emergency():
             self._all_off()
+            return {"ok": True}
+
+        @app.get("/api/settings/zones")
+        async def api_get_zones():
+            return _cfg.get("zones")
+
+        class ZoneCoords(BaseModel):
+            lat: float
+            lon: float
+
+        @app.post("/api/settings/zone/{zone_id}")
+        async def api_set_zone(zone_id: int, coords: ZoneCoords):
+            if zone_id not in (1, 2, 3, 4):
+                return {"ok": False, "error": "invalid zone"}
+            zones = _cfg.get("zones")
+            for z in zones:
+                if z["zone_id"] == zone_id:
+                    z["lat"] = round(coords.lat, 7)
+                    z["lon"] = round(coords.lon, 7)
+                    break
+            _cfg.set("zones", zones)
+            log.info(f"Zone {zone_id} GPS set to ({coords.lat:.6f}, {coords.lon:.6f})")
             return {"ok": True}
 
         @app.websocket("/ws")

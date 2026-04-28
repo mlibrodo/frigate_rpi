@@ -1,4 +1,4 @@
-# Pyregon Wildfire Defense System
+# Pyregon Wildfire Protection System
 
 Autonomous wildfire suppression controller running on a Raspberry Pi 5 with Hailo AI accelerator. Monitors up to four camera feeds for ember/fire detection, and automatically starts a gas engine pump and sequences irrigation zones based on wind direction and threat level.
 
