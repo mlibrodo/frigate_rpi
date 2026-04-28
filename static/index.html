@@ -4,7 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Pyregon Wildfire Protection</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
   :root {
     --bg:       #0d1117;
@@ -443,7 +442,7 @@
   <div id="map-container"></div>
 </div>
 
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDJDMRl8v6FAo3BmSPbMySoytrXr5Z2l2A"></script>
 <script>
 // ── WebSocket with auto-reconnect ─────────────────────────────────────────────
 const dot   = document.getElementById('conn-dot');
@@ -591,7 +590,7 @@ function showTab(name) {
 
 // ── Map ───────────────────────────────────────────────────────────────────────
 let _map = null;
-
+let _mapMarkers = [];
 const SP_COLORS = ['#58a6ff', '#3fb950', '#d29922', '#f85149'];
 
 async function initMap() {
@@ -609,43 +608,67 @@ async function initMap() {
   noCoords.style.display = 'none';
   mapDiv.style.display   = '';
 
-  // Build or re-use the Leaflet map instance
+  const center = {
+    lat: configured.reduce((s, z) => s + z.lat, 0) / configured.length,
+    lng: configured.reduce((s, z) => s + z.lon, 0) / configured.length,
+  };
+
   if (!_map) {
-    _map = L.map('map-container');
-    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 21,
-      attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-    }).addTo(_map);
-  } else {
-    _map.eachLayer(layer => { if (layer instanceof L.Marker) _map.removeLayer(layer); });
+    _map = new google.maps.Map(mapDiv, {
+      center,
+      zoom: 18,
+      mapTypeId: 'hybrid',       // satellite + labels
+      mapTypeControl: true,
+      fullscreenControl: true,
+      streetViewControl: false,
+    });
   }
 
-  const latlngs = [];
+  // Clear old markers
+  _mapMarkers.forEach(m => m.setMap(null));
+  _mapMarkers = [];
+
+  const bounds = new google.maps.LatLngBounds();
+
   configured.forEach(z => {
     const color = SP_COLORS[z.zone_id - 1] || '#8b949e';
-    const icon = L.divIcon({
-      className: '',
-      html: `<div style="
-        background:${color};color:#0d1117;
-        border-radius:50%;width:32px;height:32px;
-        display:flex;align-items:center;justify-content:center;
-        font-weight:bold;font-size:13px;font-family:monospace;
-        border:2px solid #0d1117;box-shadow:0 2px 6px rgba(0,0,0,.5);">
-        ${z.zone_id}
-      </div>`,
-      iconSize: [32, 32],
-      iconAnchor: [16, 16],
+    const marker = new google.maps.Marker({
+      position: { lat: z.lat, lng: z.lon },
+      map: _map,
+      label: {
+        text: String(z.zone_id),
+        color: '#0d1117',
+        fontWeight: 'bold',
+        fontSize: '13px',
+      },
+      icon: {
+        path: google.maps.SymbolPath.CIRCLE,
+        scale: 16,
+        fillColor: color,
+        fillOpacity: 1,
+        strokeColor: '#0d1117',
+        strokeWeight: 2,
+      },
+      title: `SP-${z.zone_id} · Valve ${z.zone_id}`,
     });
-    L.marker([z.lat, z.lon], { icon })
-      .addTo(_map)
-      .bindPopup(`<b>SP-${z.zone_id} · Valve ${z.zone_id}</b><br>${z.lat.toFixed(6)}, ${z.lon.toFixed(6)}`);
-    latlngs.push([z.lat, z.lon]);
+
+    const infoWindow = new google.maps.InfoWindow({
+      content: `<div style="font-family:monospace;font-size:13px">
+        <b>SP-${z.zone_id} · Valve ${z.zone_id}</b><br>
+        ${z.lat.toFixed(6)}, ${z.lon.toFixed(6)}
+      </div>`,
+    });
+    marker.addListener('click', () => infoWindow.open(_map, marker));
+
+    _mapMarkers.push(marker);
+    bounds.extend(marker.position);
   });
 
-  if (latlngs.length === 1) {
-    _map.setView(latlngs[0], 18);
+  if (configured.length === 1) {
+    _map.setCenter(bounds.getCenter());
+    _map.setZoom(19);
   } else {
-    _map.fitBounds(L.latLngBounds(latlngs), { padding: [40, 40] });
+    _map.fitBounds(bounds, { top: 40, right: 40, bottom: 40, left: 40 });
   }
 }
 
