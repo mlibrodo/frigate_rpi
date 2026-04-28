@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Pyregon Wildfire Protection</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
   :root {
     --bg:       #0d1117;
@@ -242,6 +243,23 @@
   .sp-btn-save { background: var(--btn-on); color: var(--green); }
   .sp-btn:disabled { opacity: 0.4; cursor: not-allowed; }
   .sp-msg { font-size: 11px; margin-top: 6px; min-height: 16px; }
+
+  /* ── Map tab ── */
+  #tab-map { padding: 12px; }
+  #map-container {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+    height: 70vh;
+    min-height: 320px;
+  }
+  #map-no-coords {
+    display: none;
+    text-align: center;
+    color: var(--muted);
+    padding: 60px 20px;
+    font-size: 14px;
+  }
 </style>
 </head>
 <body>
@@ -257,6 +275,7 @@
 <div class="tab-nav">
   <button class="tab-btn active" onclick="showTab('dashboard')">Dashboard</button>
   <button class="tab-btn"        onclick="showTab('settings')">Settings</button>
+  <button class="tab-btn"        onclick="showTab('map')">Map</button>
 </div>
 
 <main id="tab-dashboard">
@@ -416,6 +435,15 @@
   </div>
 </div>
 
+<!-- ── Map tab ─────────────────────────────────────────────────────────────── -->
+<div id="tab-map" style="display:none">
+  <div id="map-no-coords">
+    No sprinkler coordinates saved yet.<br>Go to <strong>Settings</strong> to set GPS locations for SP-1 through SP-4.
+  </div>
+  <div id="map-container"></div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 // ── WebSocket with auto-reconnect ─────────────────────────────────────────────
 const dot   = document.getElementById('conn-dot');
@@ -551,13 +579,74 @@ function esc(s) {
 
 // ── Tab navigation ────────────────────────────────────────────────────────────
 function showTab(name) {
-  ['dashboard', 'settings'].forEach(t => {
+  ['dashboard', 'settings', 'map'].forEach(t => {
     id('tab-' + t).style.display = t === name ? '' : 'none';
   });
   document.querySelectorAll('.tab-btn').forEach((btn, i) => {
-    btn.classList.toggle('active', ['dashboard','settings'][i] === name);
+    btn.classList.toggle('active', ['dashboard','settings','map'][i] === name);
   });
   if (name === 'settings') loadZones();
+  if (name === 'map') initMap();
+}
+
+// ── Map ───────────────────────────────────────────────────────────────────────
+let _map = null;
+
+const SP_COLORS = ['#58a6ff', '#3fb950', '#d29922', '#f85149'];
+
+async function initMap() {
+  const zones = await fetch('/api/settings/zones').then(r => r.json());
+  const configured = zones.filter(z => z.lat != null && z.lon != null);
+
+  const noCoords = id('map-no-coords');
+  const mapDiv   = id('map-container');
+
+  if (configured.length === 0) {
+    noCoords.style.display = 'block';
+    mapDiv.style.display   = 'none';
+    return;
+  }
+  noCoords.style.display = 'none';
+  mapDiv.style.display   = '';
+
+  // Build or re-use the Leaflet map instance
+  if (!_map) {
+    _map = L.map('map-container');
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 21,
+      attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+    }).addTo(_map);
+  } else {
+    _map.eachLayer(layer => { if (layer instanceof L.Marker) _map.removeLayer(layer); });
+  }
+
+  const latlngs = [];
+  configured.forEach(z => {
+    const color = SP_COLORS[z.zone_id - 1] || '#8b949e';
+    const icon = L.divIcon({
+      className: '',
+      html: `<div style="
+        background:${color};color:#0d1117;
+        border-radius:50%;width:32px;height:32px;
+        display:flex;align-items:center;justify-content:center;
+        font-weight:bold;font-size:13px;font-family:monospace;
+        border:2px solid #0d1117;box-shadow:0 2px 6px rgba(0,0,0,.5);">
+        ${z.zone_id}
+      </div>`,
+      iconSize: [32, 32],
+      iconAnchor: [16, 16],
+    });
+    L.marker([z.lat, z.lon], { icon })
+      .addTo(_map)
+      .bindPopup(`<b>SP-${z.zone_id} · Valve ${z.zone_id}</b><br>${z.lat.toFixed(6)}, ${z.lon.toFixed(6)}`);
+    latlngs.push([z.lat, z.lon]);
+  });
+
+  if (latlngs.length === 1) {
+    _map.setView(latlngs[0], 18);
+  } else {
+    _map.fitBounds(L.latLngBounds(latlngs), { padding: [40, 40] });
+  }
 }
 
 // ── Settings — zone GPS ───────────────────────────────────────────────────────
