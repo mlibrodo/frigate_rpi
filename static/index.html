@@ -664,11 +664,37 @@ async function initMap() {
     bounds.extend(marker.position);
   });
 
+  const center = bounds.getCenter();
+  _map.setCenter(center);
+
   if (configured.length === 1) {
-    _map.setCenter(bounds.getCenter());
-    _map.setZoom(19);
+    _map.setZoom(20);
   } else {
-    _map.fitBounds(bounds, { top: 40, right: 40, bottom: 40, left: 40 });
+    // Compute max distance between any two points (metres)
+    const R = 6371000;
+    let maxDist = 0;
+    for (let i = 0; i < configured.length; i++) {
+      for (let j = i + 1; j < configured.length; j++) {
+        const dLat = (configured[j].lat - configured[i].lat) * Math.PI / 180;
+        const dLon = (configured[j].lon - configured[i].lon) * Math.PI / 180;
+        const a = Math.sin(dLat/2)**2 +
+                  Math.cos(configured[i].lat * Math.PI/180) *
+                  Math.cos(configured[j].lat * Math.PI/180) *
+                  Math.sin(dLon/2)**2;
+        maxDist = Math.max(maxDist, 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
+      }
+    }
+    // Choose zoom so markers are clearly separated; min zoom 18
+    const zoom = maxDist < 30   ? 21
+               : maxDist < 100  ? 20
+               : maxDist < 500  ? 19
+               : maxDist < 2000 ? 17
+               : null;
+    if (zoom) {
+      _map.setZoom(zoom);
+    } else {
+      _map.fitBounds(bounds, { top: 60, right: 60, bottom: 60, left: 60 });
+    }
   }
 }
 
