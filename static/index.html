@@ -614,14 +614,14 @@ async function initMap() {
   noCoords.style.display = 'none';
   mapDiv.style.display   = '';
 
-  const center = {
+  const initialCenter = {
     lat: configured.reduce((s, z) => s + z.lat, 0) / configured.length,
     lng: configured.reduce((s, z) => s + z.lon, 0) / configured.length,
   };
 
   if (!_map) {
     _map = new google.maps.Map(mapDiv, {
-      center,
+      center: initialCenter,
       zoom: 18,
       mapTypeId: 'hybrid',       // satellite + labels
       mapTypeControl: true,
