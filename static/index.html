@@ -729,20 +729,49 @@ function useMyLocation(zoneId) {
     spMsg(zoneId, 'Geolocation not supported by this browser.', C.red);
     return;
   }
-  spMsg(zoneId, 'Acquiring GPS fix…', C.amber);
-  navigator.geolocation.getCurrentPosition(
+
+  const SAMPLES = 5;
+  const DURATION_MS = 15000;
+  const readings = [];
+  spMsg(zoneId, 'Acquiring GPS fix… (0/' + SAMPLES + ')', C.amber);
+
+  const watchId = navigator.geolocation.watchPosition(
     pos => {
-      const lat = pos.coords.latitude;
-      const lon = pos.coords.longitude;
-      id('sp-lat-' + zoneId).value = lat.toFixed(7);
-      id('sp-lon-' + zoneId).value = lon.toFixed(7);
-      spMsg(zoneId, `Got fix ±${Math.round(pos.coords.accuracy)}m — click Save to confirm.`, C.blue);
+      readings.push({
+        lat: pos.coords.latitude,
+        lon: pos.coords.longitude,
+        acc: pos.coords.accuracy,
+      });
+      const n = readings.length;
+      spMsg(zoneId, `Sampling… (${n}/${SAMPLES}, ±${Math.round(pos.coords.accuracy)}m)`, C.amber);
+
+      if (n >= SAMPLES) {
+        navigator.geolocation.clearWatch(watchId);
+        applyAverage(zoneId, readings);
+      }
     },
     err => {
+      navigator.geolocation.clearWatch(watchId);
       spMsg(zoneId, 'GPS error: ' + err.message, C.red);
     },
-    { enableHighAccuracy: true, timeout: 15000 }
+    { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
   );
+
+  // Safety cutoff — use whatever we have after DURATION_MS
+  setTimeout(() => {
+    navigator.geolocation.clearWatch(watchId);
+    if (readings.length > 0) applyAverage(zoneId, readings);
+    else spMsg(zoneId, 'GPS timed out — try again outdoors.', C.red);
+  }, DURATION_MS);
+}
+
+function applyAverage(zoneId, readings) {
+  const lat = readings.reduce((s, r) => s + r.lat, 0) / readings.length;
+  const lon = readings.reduce((s, r) => s + r.lon, 0) / readings.length;
+  const acc = Math.round(readings.reduce((s, r) => s + r.acc, 0) / readings.length);
+  id('sp-lat-' + zoneId).value = lat.toFixed(7);
+  id('sp-lon-' + zoneId).value = lon.toFixed(7);
+  spMsg(zoneId, `Avg of ${readings.length} readings, ±${acc}m — click Save to confirm.`, C.blue);
 }
 
 async function saveZone(zoneId) {
