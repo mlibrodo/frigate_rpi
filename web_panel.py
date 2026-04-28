@@ -25,9 +25,13 @@ from pathlib import Path
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
-from fastapi.exceptions import RequestValidationError
-from pydantic import BaseModel, confloat
+from pydantic import BaseModel
 from config import config as _cfg
+
+
+class ZoneCoords(BaseModel):
+    lat: float
+    lon: float
 
 log = logging.getLogger("web_panel")
 
@@ -147,10 +151,6 @@ class WebPanel:
         @app.get("/api/settings/zones")
         async def api_get_zones():
             return _cfg.get("zones")
-
-        class ZoneCoords(BaseModel):
-            lat: float
-            lon: float
 
         @app.post("/api/settings/zone/{zone_id}")
         async def api_set_zone(zone_id: int, coords: ZoneCoords):

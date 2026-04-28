@@ -618,6 +618,10 @@ async function saveZone(zoneId) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ lat, lon }),
     });
+    if (!r.ok) {
+      spMsg(zoneId, `Save failed: HTTP ${r.status}`, C.red);
+      return;
+    }
     const data = await r.json();
     if (data.ok) {
       id('sp-coords-' + zoneId).textContent = `${lat.toFixed(6)}, ${lon.toFixed(6)}`;
@@ -626,7 +630,7 @@ async function saveZone(zoneId) {
       spMsg(zoneId, 'Save failed: ' + (data.error || 'unknown'), C.red);
     }
   } catch (e) {
-    spMsg(zoneId, 'Network error.', C.red);
+    spMsg(zoneId, 'Network error: ' + e.message, C.red);
   }
 }
 
