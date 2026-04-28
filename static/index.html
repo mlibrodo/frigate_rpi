@@ -454,6 +454,56 @@
     </div>
   </div>
 
+  <!-- Sensors -->
+  <div class="card full" id="sensors-card">
+    <div class="card-title">Sensors
+      <span id="hat-status-badge" style="float:right;font-size:12px;font-weight:400;margin-top:2px">HAT: --</span>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:18px;align-items:flex-end;padding-top:6px">
+
+      <!-- Temperature -->
+      <div style="flex:1;min-width:130px;text-align:center">
+        <svg viewBox="0 0 40 100" width="32" height="80">
+          <rect x="16" y="8" width="8" height="60" rx="4" fill="var(--surface)" stroke="var(--muted)" stroke-width="1.5"/>
+          <rect id="sensor-temp-fill" x="17" y="40" width="6" height="28" rx="3" fill="var(--blue)"/>
+          <circle cx="20" cy="78" r="10" fill="var(--blue)" stroke="var(--muted)" stroke-width="1.5"/>
+          <line x1="24" y1="20" x2="28" y2="20" stroke="var(--muted)" stroke-width="1.5"/>
+          <line x1="24" y1="32" x2="28" y2="32" stroke="var(--muted)" stroke-width="1.5"/>
+          <line x1="24" y1="44" x2="28" y2="44" stroke="var(--muted)" stroke-width="1.5"/>
+          <line x1="24" y1="56" x2="28" y2="56" stroke="var(--muted)" stroke-width="1.5"/>
+        </svg>
+        <div style="font-size:20px;font-weight:700;color:var(--text);margin-top:4px" id="sensor-temp-val">--</div>
+        <div style="font-size:11px;color:var(--muted)">AMB. TEMP</div>
+      </div>
+
+      <!-- Pressure -->
+      <div style="flex:1;min-width:130px;text-align:center">
+        <svg viewBox="0 0 80 80" width="70" height="70">
+          <circle cx="40" cy="40" r="34" fill="var(--surface)" stroke="var(--muted)" stroke-width="2"/>
+          <path d="M12 56 A32 32 0 0 1 68 56" fill="none" stroke="#21262d" stroke-width="6" stroke-linecap="round"/>
+          <path id="sensor-pres-arc" d="M12 56 A32 32 0 0 1 68 56" fill="none" stroke="var(--blue)" stroke-width="6" stroke-linecap="round"
+                stroke-dasharray="100 100" stroke-dashoffset="100"/>
+          <text x="40" y="54" text-anchor="middle" font-size="14" font-weight="700" fill="var(--text)" id="sensor-pres-val">--</text>
+          <text x="40" y="66" text-anchor="middle" font-size="8" fill="var(--muted)">PSI</text>
+        </svg>
+        <div style="font-size:11px;color:var(--muted)">WATER PRESSURE</div>
+      </div>
+
+      <!-- Battery -->
+      <div style="flex:1;min-width:130px;text-align:center">
+        <svg viewBox="0 0 60 100" width="40" height="80">
+          <rect x="18" y="0" width="24" height="8" rx="3" fill="var(--muted)"/>
+          <rect x="4" y="8" width="52" height="84" rx="6" fill="var(--surface)" stroke="var(--muted)" stroke-width="2"/>
+          <rect id="sensor-batt-fill" x="8" y="60" width="44" height="28" rx="4" fill="var(--green)"/>
+          <text x="30" y="52" text-anchor="middle" font-size="11" font-weight="700" fill="var(--text)" id="sensor-batt-val">--</text>
+          <text x="30" y="63" text-anchor="middle" font-size="8" fill="var(--muted)">VOLTS</text>
+        </svg>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px">BATTERY</div>
+      </div>
+
+    </div>
+  </div>
+
   <!-- Emergency -->
   <div class="full" style="text-align:right">
     <button class="emergency-btn" onclick="emergency()">⚡ EMERGENCY ALL OFF</button>
@@ -650,6 +700,51 @@ function applyState(s) {
     });
     // Rotate handle: 0deg = open (handle vertical, bore horizontal), 90deg = closed
     vg.style.transform = open ? 'rotate(0deg)' : 'rotate(90deg)';
+  }
+
+  // Sensors
+  const hatBadge = id('hat-status-badge');
+  if (s.hat_online) {
+    hatBadge.textContent = 'HAT: ONLINE';
+    hatBadge.style.color = C.green;
+  } else {
+    hatBadge.textContent = 'HAT: OFFLINE';
+    hatBadge.style.color = C.red;
+  }
+  // Temperature thermometer fill (0–100°C range)
+  if (s.sensor_temp != null) {
+    id('sensor-temp-val').textContent = s.sensor_temp.toFixed(1) + ' °C';
+    const tPct = Math.min(Math.max(s.sensor_temp / 100, 0), 1);
+    const tH = Math.round(28 * tPct);
+    const tY = 68 - tH;
+    const tFill = id('sensor-temp-fill');
+    tFill.setAttribute('y', tY);
+    tFill.setAttribute('height', tH || 2);
+    tFill.setAttribute('fill', s.sensor_temp > 60 ? C.red : s.sensor_temp > 40 ? C.amber : C.blue);
+  } else {
+    id('sensor-temp-val').textContent = '--';
+  }
+  // Pressure gauge arc (0–150 PSI, arc length 100)
+  if (s.sensor_pressure != null) {
+    id('sensor-pres-val').textContent = s.sensor_pressure.toFixed(0);
+    const pPct = Math.min(Math.max(s.sensor_pressure / 150, 0), 1);
+    const arc  = id('sensor-pres-arc');
+    arc.setAttribute('stroke-dashoffset', (100 - pPct * 100).toFixed(1));
+    arc.setAttribute('stroke', s.sensor_pressure > 120 ? C.red : s.sensor_pressure > 80 ? C.amber : C.blue);
+  } else {
+    id('sensor-pres-val').textContent = '--';
+  }
+  // Battery fill (0–15V range)
+  if (s.sensor_battery != null) {
+    id('sensor-batt-val').textContent = s.sensor_battery.toFixed(2);
+    const bPct = Math.min(Math.max(s.sensor_battery / 15, 0), 1);
+    const bH   = Math.round(28 * bPct);
+    const bFill = id('sensor-batt-fill');
+    bFill.setAttribute('y', 88 - bH);
+    bFill.setAttribute('height', bH || 2);
+    bFill.setAttribute('fill', bPct < 0.2 ? C.red : bPct < 0.4 ? C.amber : C.green);
+  } else {
+    id('sensor-batt-val').textContent = '--';
   }
 }
 

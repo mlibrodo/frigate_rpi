@@ -41,6 +41,7 @@ from config import config
 from auto_mode import AutoModeController, AutoState
 from anemometer import Anemometer, SimulatedAnemometer
 from settings_modal import SettingsModal
+from sensors import HATSensors
 
 # ─── Configuration ─────────────────────────────────────────────────────────────
 
@@ -390,6 +391,10 @@ class WildfirePanel(tk.Tk):
         except Exception as e:
             log.warning(f"Anemometer unavailable ({e}) — using simulation.")
             self._anemometer = SimulatedAnemometer(speed_mph=12.0, direction_deg=45.0)
+
+        # SM-1-029 HAT sensors (temp, pressure, battery, throttle relays)
+        self._hat_sensors = HATSensors()
+        self._hat_sensors.start()
 
         # Relay bridge
         self._relay_bridge = RelayControllerBridge(engine)
@@ -818,14 +823,28 @@ class WildfirePanel(tk.Tk):
                                     font=FONT_BODY, bg=C["bg"],
                                     fg=C["green"] if HAT_AVAILABLE else C["amber"], anchor="w")
         # Anemometer / Frigate status rows
-        self._lbl_sys_anemo  = tk.Label(info, text="Anemometer: --",
-                                        font=FONT_BODY, bg=C["bg"], fg=C["text"], anchor="w")
+        self._lbl_sys_anemo    = tk.Label(info, text="Anemometer: --",
+                                          font=FONT_BODY, bg=C["bg"], fg=C["text"], anchor="w")
         self._lbl_sys_roboflow = tk.Label(info, text="Roboflow: --",
                                           font=FONT_BODY, bg=C["bg"], fg=C["text"], anchor="w")
 
+        # SM-1-029 HAT sensor rows
+        hat_status = "CONNECTED" if self._hat_sensors.is_online() else "NOT DETECTED"
+        hat_color  = C["green"] if self._hat_sensors.is_online() else C["amber"]
+        self._lbl_sensor_hat  = tk.Label(info, text=f"Sensor HAT: {hat_status}",
+                                         font=FONT_BODY, bg=C["bg"], fg=hat_color, anchor="w")
+        self._lbl_sensor_temp = tk.Label(info, text="Amb. Temp: --",
+                                         font=FONT_BODY, bg=C["bg"], fg=C["text"], anchor="w")
+        self._lbl_sensor_pres = tk.Label(info, text="Water Pressure: --",
+                                         font=FONT_BODY, bg=C["bg"], fg=C["text"], anchor="w")
+        self._lbl_sensor_batt = tk.Label(info, text="Battery: --",
+                                         font=FONT_BODY, bg=C["bg"], fg=C["text"], anchor="w")
+
         for lbl in [self._lbl_cpu, self._lbl_temp, self._lbl_mem,
                     self._lbl_uptime, self._lbl_hat,
-                    self._lbl_sys_anemo, self._lbl_sys_roboflow]:
+                    self._lbl_sys_anemo, self._lbl_sys_roboflow,
+                    self._lbl_sensor_hat, self._lbl_sensor_temp,
+                    self._lbl_sensor_pres, self._lbl_sensor_batt]:
             lbl.pack(fill="x", padx=10, pady=2)
 
         btn_frame = tk.Frame(p, bg=C["bg"])
@@ -1101,6 +1120,10 @@ class WildfirePanel(tk.Tk):
             "ember_pct":      round(self._auto_ctrl.get_max_ember_confidence(), 1),
             "anemo_online":   self._anemometer.is_online(),
             "roboflow_online": self._roboflow_online,
+            "hat_online":     self._hat_sensors.is_online() if hasattr(self, '_hat_sensors') else False,
+            "sensor_temp":    (self._hat_sensors.get_reading().temp_c        if hasattr(self, '_hat_sensors') and self._hat_sensors.get_reading().valid else None),
+            "sensor_pressure":(self._hat_sensors.get_reading().pressure_psi  if hasattr(self, '_hat_sensors') and self._hat_sensors.get_reading().valid else None),
+            "sensor_battery": (self._hat_sensors.get_reading().battery_v     if hasattr(self, '_hat_sensors') and self._hat_sensors.get_reading().valid else None),
         }
 
     # ─── Polling ────────────────────────────────────────────────────────────────
@@ -1172,6 +1195,15 @@ class WildfirePanel(tk.Tk):
             self._lbl_uptime.configure(text="Uptime: up " + " ".join(parts))
         except Exception:
             pass
+        if hasattr(self, '_hat_sensors'):
+            r = self._hat_sensors.get_reading()
+            if r.valid:
+                self._lbl_sensor_temp.configure(text=f"Amb. Temp: {r.temp_c:.1f} °C")
+                self._lbl_sensor_pres.configure(text=f"Water Pressure: {r.pressure_psi:.1f} PSI")
+                self._lbl_sensor_batt.configure(text=f"Battery: {r.battery_v:.2f} V")
+            else:
+                status = "online (no data)" if self._hat_sensors.is_online() else "offline"
+                self._lbl_sensor_hat.configure(text=f"Sensor HAT: {status}")
 
     # ─── Pump process ───────────────────────────────────────────────────────────
 
