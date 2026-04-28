@@ -367,6 +367,9 @@ class WildfirePanel(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self._safe_quit)
         self._append_log("Panel started")
 
+        # Start in AUTO mode
+        self.after(500, self._mode_toggle)
+
     # ─── Sensor / AUTO mode init ───────────────────────────────────────────────
 
     def _init_sensors(self):

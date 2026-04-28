@@ -155,12 +155,12 @@
 
   /* ── Emergency button ── */
   .emergency-btn {
-    width: 100%; padding: 20px;
+    padding: 8px 18px;
     background: var(--btn-stop); color: var(--red);
     font-family: 'Courier New', monospace;
-    font-size: 20px; font-weight: bold;
-    border: 2px solid #5a1a1a; border-radius: 6px;
-    cursor: pointer; letter-spacing: 2px;
+    font-size: 13px; font-weight: bold;
+    border: 1px solid #5a1a1a; border-radius: 4px;
+    cursor: pointer; letter-spacing: 1px;
     transition: background 0.15s;
   }
   .emergency-btn:hover { background: #4a1a1a; }
@@ -309,19 +309,28 @@
     <div class="card-title">Engine</div>
     <div class="pump-wrap">
       <svg id="pump-svg" viewBox="0 0 100 100" width="90" height="90" style="color:var(--red)">
-        <!-- Outlet pipe right -->
-        <rect x="86" y="42" width="14" height="16" rx="3" fill="currentColor"/>
-        <!-- Inlet pipe top -->
-        <rect x="42" y="0"  width="16" height="14" rx="3" fill="currentColor"/>
-        <!-- Casing -->
-        <circle cx="50" cy="50" r="36" fill="var(--surface)" stroke="currentColor" stroke-width="3"/>
+        <!-- Outlet pipe (right) with flange -->
+        <rect x="84" y="40" width="16" height="20" rx="2" fill="currentColor"/>
+        <rect x="82" y="38" width="4"  height="24" rx="1" fill="currentColor" opacity="0.6"/>
+        <!-- Inlet pipe (top) with flange -->
+        <rect x="40" y="0"  width="20" height="16" rx="2" fill="currentColor"/>
+        <rect x="38" y="14" width="24" height="4"  rx="1" fill="currentColor" opacity="0.6"/>
+        <!-- Volute casing -->
+        <circle cx="50" cy="50" r="36" fill="var(--surface)" stroke="currentColor" stroke-width="3.5"/>
+        <!-- Wear ring (inner casing detail) -->
+        <circle cx="50" cy="50" r="28" fill="none" stroke="currentColor" stroke-width="1" opacity="0.3"/>
         <!-- Impeller (spins when running) -->
         <g id="pump-rotor">
-          <rect x="46" y="18" width="8" height="30" rx="4" fill="currentColor" transform="rotate(0,   50, 50)"/>
-          <rect x="46" y="18" width="8" height="30" rx="4" fill="currentColor" transform="rotate(120, 50, 50)"/>
-          <rect x="46" y="18" width="8" height="30" rx="4" fill="currentColor" transform="rotate(240, 50, 50)"/>
+          <!-- 3 backward-swept blades (ellipses offset from center, rotated) -->
+          <ellipse cx="50" cy="31" rx="6" ry="17" fill="currentColor" transform="rotate(10,  50,50)"/>
+          <ellipse cx="50" cy="31" rx="6" ry="17" fill="currentColor" transform="rotate(130, 50,50)"/>
+          <ellipse cx="50" cy="31" rx="6" ry="17" fill="currentColor" transform="rotate(250, 50,50)"/>
+          <!-- Outer shroud ring -->
+          <circle cx="50" cy="50" r="24" fill="none" stroke="currentColor" stroke-width="2.5"/>
           <!-- Hub -->
-          <circle cx="50" cy="50" r="7" fill="var(--surface)" stroke="currentColor" stroke-width="2"/>
+          <circle cx="50" cy="50" r="9"  fill="var(--surface)" stroke="currentColor" stroke-width="2"/>
+          <!-- Shaft dot -->
+          <circle cx="50" cy="50" r="3"  fill="currentColor"/>
         </g>
       </svg>
     </div>
@@ -446,8 +455,8 @@
   </div>
 
   <!-- Emergency -->
-  <div class="full">
-    <button class="emergency-btn" onclick="emergency()">⚡  EMERGENCY ALL OFF</button>
+  <div class="full" style="text-align:right">
+    <button class="emergency-btn" onclick="emergency()">⚡ EMERGENCY ALL OFF</button>
   </div>
 
   <!-- Event log -->
@@ -626,7 +635,7 @@ function applyState(s) {
   // Zones
   for (let i = 1; i <= 4; i++) {
     const open = s.zones && s.zones[String(i)];
-    const zClr = open ? C.green : C.red;
+    const zClr = open ? C.blue : C.red;
     set('zone-status-' + i, open ? '● OPEN' : '● CLOSED', zClr);
     const btn = id('zone-btn-' + i);
     btn.textContent      = open ? 'CLOSE' : 'OPEN';
