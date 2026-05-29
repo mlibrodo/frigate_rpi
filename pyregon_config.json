@@ -17,26 +17,26 @@
     {
       "zone_id": 1,
       "label": "Zone 1",
-      "lat": null,
-      "lon": null
+      "lat": 39.1924869,
+      "lon": -120.1104727
     },
     {
       "zone_id": 2,
       "label": "Zone 2",
-      "lat": null,
-      "lon": null
+      "lat": 39.1924296,
+      "lon": -120.1106573
     },
     {
       "zone_id": 3,
       "label": "Zone 3",
-      "lat": null,
-      "lon": null
+      "lat": 39.1922452,
+      "lon": -120.1107081
     },
     {
       "zone_id": 4,
       "label": "Zone 4",
-      "lat": null,
-      "lon": null
+      "lat": 39.1921854,
+      "lon": -120.1105758
     }
   ],
   "cameras": [

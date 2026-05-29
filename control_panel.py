@@ -91,7 +91,7 @@ PUMP_MODEL_ID = "ember-training-poc/1"
 PUMP_FPS      = "2.0"
 
 # Anemometer serial port
-ANEMOMETER_PORT    = "/dev/ttyUSB0"
+ANEMOMETER_PORT    = "/dev/ttyAMA0"
 ANEMOMETER_ADDRESS = 1
 ANEMOMETER_BAUD    = 4800
 
