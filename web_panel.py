@@ -24,7 +24,7 @@ from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 from config import config as _cfg
 
@@ -116,6 +116,13 @@ class WebPanel:
         @app.get("/api/state")
         async def api_state():
             return self._get_state()
+
+        @app.get("/api/latest-detection.jpg")
+        async def api_latest_detection():
+            p = Path("/tmp/latest_detection.jpg")
+            if not p.exists():
+                return HTMLResponse("No detection image yet", status_code=404)
+            return FileResponse(str(p), media_type="image/jpeg")
 
         @app.get("/api/events")
         async def api_events(limit: int = 100):

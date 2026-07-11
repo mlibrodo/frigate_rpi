@@ -379,6 +379,13 @@
     </div>
   </div>
 
+  <!-- Last Detection -->
+  <div class="card full" id="detection-card">
+    <div class="card-title">Last Detection</div>
+    <div id="detection-ts" style="font-size:11px;color:var(--muted);margin-bottom:6px">No detection yet</div>
+    <img id="detection-img" src="" alt="" style="display:none;width:100%;border-radius:6px;border:1px solid #30363d"/>
+  </div>
+
   <!-- Zones -->
   <div class="card full">
     <div class="card-title">Sprinkler Zones</div>
@@ -672,6 +679,15 @@ function applyState(s) {
   id('ember-bar').style.background = pct > 0 ? barClr : '#21262d';
   id('ember-pct').textContent      = pct.toFixed(0) + '%';
   id('ember-pct').style.color      = pct > 0 ? barClr : C.muted;
+
+  // Detection image
+  if (s.detection_ts && s.detection_ts !== applyState._lastDetectionTs) {
+    applyState._lastDetectionTs = s.detection_ts;
+    id('detection-ts').textContent = 'Detected at ' + s.detection_ts;
+    const img = id('detection-img');
+    img.src = '/api/latest-detection.jpg?t=' + encodeURIComponent(s.detection_ts);
+    img.style.display = 'block';
+  }
 
   // Roboflow
   const rfOk = s.roboflow_online;

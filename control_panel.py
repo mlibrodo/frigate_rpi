@@ -28,6 +28,8 @@ import signal
 from datetime import datetime
 from collections import deque
 
+import shutil
+from pathlib import Path
 import web_panel as _web_panel_mod
 
 try:
@@ -344,6 +346,8 @@ class WildfirePanel(tk.Tk):
         self._pump_top    = "unknown"
         self._pump_conf   = 0.0
         self._is_auto_mode = False   # thread-safe mirror of mode_auto BooleanVar
+        self._detection_ts        = None
+        self._last_detection_push = 0.0
 
         # ── Sensor / AUTO mode initialisation ─────────────────────────────────
         self._init_sensors()
@@ -962,6 +966,16 @@ class WildfirePanel(tk.Tk):
         """Called from _read_pump_output when pump.py reports an ember detection."""
         conf_pct = confidence * 100
         self.after(0, self._update_camera_confidence, camera_id, conf_pct)
+        now = time.time()
+        if now - self._last_detection_push >= 60:
+            self._last_detection_push = now
+            src = Path(f"/tmp/{PUMP_CAMERA}/latest.jpg")
+            dst = Path("/tmp/latest_detection.jpg")
+            try:
+                shutil.copy2(src, dst)
+                self._detection_ts = datetime.now().strftime("%H:%M:%S")
+            except Exception as e:
+                log.warning(f"Could not copy detection image: {e}")
 
     def _update_camera_confidence(self, camera_id: int, conf_pct: float):
         """Update per-camera confidence label on CAMERA tab."""
@@ -1120,6 +1134,7 @@ class WildfirePanel(tk.Tk):
             "ember_pct":      round(self._auto_ctrl.get_max_ember_confidence(), 1),
             "anemo_online":   self._anemometer.is_online(),
             "roboflow_online": self._roboflow_online,
+            "detection_ts":   self._detection_ts,
             "hat_online":     self._hat_sensors.is_online() if hasattr(self, '_hat_sensors') else False,
             "sensor_temp":    (self._hat_sensors.get_reading().temp_c        if hasattr(self, '_hat_sensors') and self._hat_sensors.get_reading().valid else None),
             "sensor_pressure":(self._hat_sensors.get_reading().pressure_psi  if hasattr(self, '_hat_sensors') and self._hat_sensors.get_reading().valid else None),
