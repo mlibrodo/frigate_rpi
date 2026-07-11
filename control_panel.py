@@ -68,10 +68,10 @@ FRIGATE_URL   = "http://localhost:5000"
 
 # Camera snapshot config
 CAMERAS = [
-    ("tahoe_cam1", "CAM 1 - NORTH"),
-    ("tahoe_cam2", "CAM 2 - EAST"),
-    ("tahoe_cam3", "CAM 3 - SOUTH"),
-    ("tahoe_cam4", "CAM 4 - WEST"),
+    ("Pyregon_cam3", "PYREGON CAM 3"),
+    ("Pyregon_cam1", "PYREGON CAM 1"),
+    ("Pyregon_cam2", "PYREGON CAM 2"),
+    ("Pyregon_cam4", "PYREGON CAM 4"),
 ]
 SNAPSHOT_REFRESH_SEC = 30
 
@@ -85,7 +85,7 @@ def fetch_camera_snapshot(cam_name):
     except Exception:
         return None
 PUMP_SCRIPT   = "/home/librodo112/frigate_rpi/pump.py"
-PUMP_CAMERA   = "tahoe_cam1"
+PUMP_CAMERA   = "Pyregon_cam3"
 PUMP_API_KEY  = "B5p60bLPJYURpEpoGHcc"
 PUMP_MODEL_ID = "ember-training-poc/1"
 PUMP_FPS      = "2.0"
@@ -749,10 +749,10 @@ class WildfirePanel(tk.Tk):
 
         IMG_W, IMG_H = 168, 110
         cam_info = [
-            (1, "tahoe_cam1", "CAM 1 - NORTH"),
-            (2, "tahoe_cam2", "CAM 2 - EAST"),
-            (3, "tahoe_cam3", "CAM 3 - SOUTH"),
-            (4, "tahoe_cam4", "CAM 4 - WEST"),
+            (1, "Pyregon_cam1", "PYREGON CAM 1"),
+            (2, "Pyregon_cam2", "PYREGON CAM 2"),
+            (3, "Pyregon_cam3", "PYREGON CAM 3"),
+            (4, "Pyregon_cam4", "PYREGON CAM 4"),
         ]
         for cam_id, cam_name, label in cam_info:
             cell = tk.Frame(cam_labels_row, bg=C["surface"], bd=1, relief="solid")
@@ -1225,7 +1225,7 @@ class WildfirePanel(tk.Tk):
             )
             atexit.register(self._stop_pump)  # ensure cleanup on any exit
             threading.Thread(target=self._read_pump_output, daemon=True).start()
-            self._append_log("Pump started (tahoe_cam1 → Roboflow)")
+            self._append_log("Pump started (Pyregon_cam3 → Roboflow)")
         except Exception as e:
             self._append_log(f"Pump start failed: {e}")
 
@@ -1246,6 +1246,10 @@ class WildfirePanel(tk.Tk):
         """
         self._pump_display_dirty = False
         self._last_pump_error_log = 0.0
+        self._last_unknown_camera_log = 0.0
+        # Map Frigate camera name (e.g. "Pyregon_cam3") -> camera_id (1-4),
+        # so each detection is attributed to its actual source camera/bearing.
+        camera_name_to_id = {c["label"]: c["camera_id"] for c in config.get("cameras")}
         try:
             for line in self._pump_proc.stdout:
                 line = line.strip()
@@ -1263,15 +1267,25 @@ class WildfirePanel(tk.Tk):
                     self._roboflow_online = True
                     self._pump_display_dirty = True  # flushed by _tick, not after(0)
 
-                    # Feed ember detections into AUTO mode controller
+                    # Feed ember detections into AUTO mode controller, attributed
+                    # to the camera that actually produced them.
                     if self._pump_top == "ember":
-                        # Camera 1 = North (pump.py monitors tahoe_cam1)
+                        cam_name = data.get("camera")
+                        camera_id = camera_name_to_id.get(cam_name)
+                        if camera_id is None:
+                            now = time.time()
+                            if now - self._last_unknown_camera_log >= 10:
+                                self._last_unknown_camera_log = now
+                                msg = f"[PUMP] Unknown camera '{cam_name}' in prediction — skipping"
+                                self.after(0, self._append_log, msg)
+                            continue
+
                         self._auto_ctrl.feed_detection(
-                            camera_id  = 1,
+                            camera_id  = camera_id,
                             label      = "ember",
                             confidence = self._pump_conf,
                         )
-                        self._on_ember_detection(1, self._pump_conf)
+                        self._on_ember_detection(camera_id, self._pump_conf)
 
                 elif event == "error":
                     self._roboflow_online = False

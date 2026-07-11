@@ -1,8 +1,11 @@
 mqtt:
   enabled: false
 
+ffmpeg:
+  hwaccel_args: preset-rpi-64-h265
+
 cameras:
-  tahoe_cam1:
+  Pyregon_cam3:
     enabled: true
     ffmpeg:
       inputs:
@@ -27,7 +30,7 @@ cameras:
       retain:
         default: 7
 
-  tahoe_cam2:
+  Pyregon_cam1:
     enabled: true
     ffmpeg:
       inputs:
@@ -52,7 +55,7 @@ cameras:
       retain:
         default: 7
 
-  tahoe_cam3:
+  Pyregon_cam2:
     enabled: true
     ffmpeg:
       inputs:
@@ -77,7 +80,7 @@ cameras:
       retain:
         default: 7
 
-  tahoe_cam4:
+  Pyregon_cam4:
     enabled: true
     ffmpeg:
       inputs:

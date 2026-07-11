@@ -17,6 +17,8 @@ services:
       - TZ=America/Los_Angeles
     devices:
       - /dev/hailo0:/dev/hailo0
+      - /dev/video19:/dev/video19   # rpi-hevc-dec hardware HEVC decoder
+      - /dev/media1:/dev/media1
 
           # optional: ONLY if you want to manage roboflow via compose too
   inference-server:

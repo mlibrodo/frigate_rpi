@@ -15,7 +15,7 @@ Env vars
   MODEL_ID            default: ember-training-poc/1          (dataset/version)
   ROBOFLOW_URL        default: http://127.0.0.1:9001
   FRIGATE_URL         default: http://192.168.1.102:5000
-  FRIGATE_CAMERAS     default: tahoe_cam1,tahoe_cam2  (comma-separated)
+  FRIGATE_CAMERAS     default: Pyregon_cam3,Pyregon_cam1  (comma-separated)
 
   PUMP_FPS            default: 2.0     (soft rate limit per camera)
   MIN_INTERVAL_S      default: 0       (hard min seconds per loop; overrides if larger)
@@ -75,10 +75,10 @@ class Config:
 def parse_config() -> Config:
     api_key = os.environ.get("ROBOFLOW_API_KEY", "B5p60bLPJYURpEpoGHcc")
 
-    cameras_raw = os.environ.get("FRIGATE_CAMERAS", "tahoe_cam1,tahoe_cam2")
+    cameras_raw = os.environ.get("FRIGATE_CAMERAS", "Pyregon_cam3,Pyregon_cam1")
     cameras = [c.strip() for c in cameras_raw.split(",") if c.strip()]
     if not cameras:
-        cameras = ["tahoe_cam1"]
+        cameras = ["Pyregon_cam3"]
 
     keep_frames = int(os.environ.get("KEEP_FRAMES", "5"))
     if keep_frames < 0:

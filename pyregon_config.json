@@ -42,25 +42,25 @@
   "cameras": [
     {
       "camera_id": 1,
-      "label": "Camera 1",
+      "label": "Pyregon_cam1",
       "bearing": 0,
       "cardinal": "N"
     },
     {
       "camera_id": 2,
-      "label": "Camera 2",
+      "label": "Pyregon_cam2",
       "bearing": 90,
       "cardinal": "E"
     },
     {
       "camera_id": 3,
-      "label": "Camera 3",
+      "label": "Pyregon_cam3",
       "bearing": 180,
       "cardinal": "S"
     },
     {
       "camera_id": 4,
-      "label": "Camera 4",
+      "label": "Pyregon_cam4",
       "bearing": 270,
       "cardinal": "W"
     }

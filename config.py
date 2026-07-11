@@ -52,11 +52,15 @@ DEFAULTS = {
     ],
 
     # CAMERA BEARINGS (fixed at install — Camera 1=N, 2=E, 3=S, 4=W)
+    # camera_id 1 confirmed = Pyregon_cam1 (physically verified pointing North, 2026-07-11)
+    # camera_id 2 confirmed = Pyregon_cam2 (physically verified pointing East, 2026-07-11)
+    # camera_id 3 confirmed = Pyregon_cam3 (physically verified pointing South, 2026-07-11)
+    # camera_id 4 confirmed = Pyregon_cam4 (physically verified pointing West, 2026-07-11)
     "cameras": [
-        {"camera_id": 1, "label": "Camera 1", "bearing": 0,   "cardinal": "N"},
-        {"camera_id": 2, "label": "Camera 2", "bearing": 90,  "cardinal": "E"},
-        {"camera_id": 3, "label": "Camera 3", "bearing": 180, "cardinal": "S"},
-        {"camera_id": 4, "label": "Camera 4", "bearing": 270, "cardinal": "W"},
+        {"camera_id": 1, "label": "Pyregon_cam1", "bearing": 0,   "cardinal": "N"},
+        {"camera_id": 2, "label": "Pyregon_cam2", "bearing": 90,  "cardinal": "E"},
+        {"camera_id": 3, "label": "Pyregon_cam3", "bearing": 180, "cardinal": "S"},
+        {"camera_id": 4, "label": "Pyregon_cam4", "bearing": 270, "cardinal": "W"},
     ],
 }
 
