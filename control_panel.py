@@ -7,6 +7,7 @@ Integrated modules:
   - config.py          : persistent JSON settings
   - auto_mode.py       : AUTO mode state machine
   - anemometer.py      : Renke RS-CFSFX-N01 Modbus RTU driver
+  - pt100.py           : RS-485 PT100 temp module driver (shares anemometer's bus)
   - settings_modal.py  : gear-icon settings overlay
 
 Detection pipeline:
@@ -42,6 +43,7 @@ except ImportError:
 from config import config
 from auto_mode import AutoModeController, AutoState
 from anemometer import Anemometer, SimulatedAnemometer
+from pt100 import PT100, SimulatedPT100
 from settings_modal import SettingsModal
 from sensors import HATSensors
 
@@ -96,6 +98,11 @@ PUMP_FPS      = "2.0"
 ANEMOMETER_PORT    = "/dev/ttyAMA0"
 ANEMOMETER_ADDRESS = 1
 ANEMOMETER_BAUD    = 4800
+
+# PT100 temp module — shares the anemometer's RS-485 bus
+PT100_PORT    = "/dev/ttyAMA0"
+PT100_ADDRESS = 1
+PT100_BAUD    = 9600
 
 # Log file
 LOG_FILE        = "/var/log/wildfire_panel.log"
@@ -396,7 +403,23 @@ class WildfirePanel(tk.Tk):
             log.warning(f"Anemometer unavailable ({e}) — using simulation.")
             self._anemometer = SimulatedAnemometer(speed_mph=12.0, direction_deg=45.0)
 
-        # SM-1-029 HAT sensors (temp, pressure, battery, throttle relays)
+        # PT100 temp module — fall back to simulation if port unavailable
+        try:
+            self._pt100 = PT100(
+                port=PT100_PORT,
+                device_address=PT100_ADDRESS,
+                baud_rate=PT100_BAUD,
+                poll_interval=1.0,
+            )
+            if not self._pt100.connect():
+                raise RuntimeError("Could not open serial port")
+            self._pt100.start_polling()
+            log.info("PT100 connected.")
+        except Exception as e:
+            log.warning(f"PT100 unavailable ({e}) — using simulation.")
+            self._pt100 = SimulatedPT100(temp_f=78.0)
+
+        # SM-1-029 HAT sensors (pressure, battery, throttle relays)
         self._hat_sensors = HATSensors()
         self._hat_sensors.start()
 
@@ -1136,7 +1159,8 @@ class WildfirePanel(tk.Tk):
             "roboflow_online": self._roboflow_online,
             "detection_ts":   self._detection_ts,
             "hat_online":     self._hat_sensors.is_online() if hasattr(self, '_hat_sensors') else False,
-            "sensor_temp":    (self._hat_sensors.get_reading().temp_c        if hasattr(self, '_hat_sensors') and self._hat_sensors.get_reading().valid else None),
+            "pt100_online":   self._pt100.is_online() if hasattr(self, '_pt100') else False,
+            "sensor_temp":    (self._pt100.get_temperature_f() if hasattr(self, '_pt100') and self._pt100.is_online() else None),
             "sensor_pressure":(self._hat_sensors.get_reading().pressure_psi  if hasattr(self, '_hat_sensors') and self._hat_sensors.get_reading().valid else None),
             "sensor_battery": (self._hat_sensors.get_reading().battery_v     if hasattr(self, '_hat_sensors') and self._hat_sensors.get_reading().valid else None),
         }
@@ -1210,10 +1234,14 @@ class WildfirePanel(tk.Tk):
             self._lbl_uptime.configure(text="Uptime: up " + " ".join(parts))
         except Exception:
             pass
+        if hasattr(self, '_pt100'):
+            if self._pt100.is_online():
+                self._lbl_sensor_temp.configure(text=f"Amb. Temp: {self._pt100.get_temperature_f():.1f} °F")
+            else:
+                self._lbl_sensor_temp.configure(text="Amb. Temp: offline")
         if hasattr(self, '_hat_sensors'):
             r = self._hat_sensors.get_reading()
             if r.valid:
-                self._lbl_sensor_temp.configure(text=f"Amb. Temp: {r.temp_c:.1f} °C")
                 self._lbl_sensor_pres.configure(text=f"Water Pressure: {r.pressure_psi:.1f} PSI")
                 self._lbl_sensor_batt.configure(text=f"Battery: {r.battery_v:.2f} V")
             else:
@@ -1431,6 +1459,8 @@ class WildfirePanel(tk.Tk):
         if self.mode_auto.get():
             self._auto_ctrl.disable()
         self._anemometer.stop_polling()
+        if hasattr(self, '_pt100'):
+            self._pt100.stop_polling()
         self._stop_pump()
         self._emergency_all_off()
         self.destroy()

@@ -727,16 +727,16 @@ function applyState(s) {
     hatBadge.textContent = 'HAT: OFFLINE';
     hatBadge.style.color = C.red;
   }
-  // Temperature thermometer fill (0–100°C range)
+  // Temperature thermometer fill (0–212°F range, equivalent to old 0–100°C)
   if (s.sensor_temp != null) {
-    id('sensor-temp-val').textContent = s.sensor_temp.toFixed(1) + ' °C';
-    const tPct = Math.min(Math.max(s.sensor_temp / 100, 0), 1);
+    id('sensor-temp-val').textContent = s.sensor_temp.toFixed(1) + ' °F';
+    const tPct = Math.min(Math.max(s.sensor_temp / 212, 0), 1);
     const tH = Math.round(28 * tPct);
     const tY = 68 - tH;
     const tFill = id('sensor-temp-fill');
     tFill.setAttribute('y', tY);
     tFill.setAttribute('height', tH || 2);
-    tFill.setAttribute('fill', s.sensor_temp > 60 ? C.red : s.sensor_temp > 40 ? C.amber : C.blue);
+    tFill.setAttribute('fill', s.sensor_temp > 140 ? C.red : s.sensor_temp > 104 ? C.amber : C.blue);
   } else {
     id('sensor-temp-val').textContent = '--';
   }
