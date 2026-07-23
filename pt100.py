@@ -166,6 +166,10 @@ class PT100:
 
         try:
             with self._lock:
+                # minimalmodbus shares one serial.Serial object per port path across
+                # all Instrument instances (see _serialports in minimalmodbus.py) —
+                # another driver sharing this port may have changed the baud rate.
+                self._instrument.serial.baudrate = self.baud_rate
                 raw = self._instrument.read_register(
                     registeraddress=REG_TEMPERATURE,
                     number_of_decimals=0,

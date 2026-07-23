@@ -96,7 +96,7 @@ PUMP_FPS      = "2.0"
 
 # Anemometer serial port
 ANEMOMETER_PORT    = "/dev/ttyAMA0"
-ANEMOMETER_ADDRESS = 1
+ANEMOMETER_ADDRESS = 2
 ANEMOMETER_BAUD    = 4800
 
 # PT100 temp module — shares the anemometer's RS-485 bus

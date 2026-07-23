@@ -199,6 +199,10 @@ class Anemometer:
 
         try:
             with self._lock:
+                # minimalmodbus shares one serial.Serial object per port path across
+                # all Instrument instances (see _serialports in minimalmodbus.py) —
+                # another driver sharing this port may have changed the baud rate.
+                self._instrument.serial.baudrate = self.baud_rate
                 # Read 4 consecutive registers starting at 0x0000
                 raw = self._instrument.read_registers(
                     registeraddress=REG_WIND_SPEED,
