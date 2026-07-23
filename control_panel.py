@@ -387,6 +387,13 @@ class WildfirePanel(tk.Tk):
     def _init_sensors(self):
         """Initialise anemometer, relay bridge, and AUTO controller."""
 
+        # Anemometer and PT100 share one physical RS-485 port (/dev/ttyAMA0), and
+        # minimalmodbus shares one serial.Serial object per port path across both
+        # drivers' Instrument objects — a private per-driver lock does not prevent
+        # one driver's background poll thread from racing the other's. Both must
+        # use this same lock.
+        rs485_bus_lock = threading.Lock()
+
         # Anemometer — fall back to simulation if port unavailable
         try:
             self._anemometer = Anemometer(
@@ -394,6 +401,7 @@ class WildfirePanel(tk.Tk):
                 device_address=ANEMOMETER_ADDRESS,
                 baud_rate=ANEMOMETER_BAUD,
                 poll_interval=1.0,
+                shared_lock=rs485_bus_lock,
             )
             if not self._anemometer.connect():
                 raise RuntimeError("Could not open serial port")
@@ -410,6 +418,7 @@ class WildfirePanel(tk.Tk):
                 device_address=PT100_ADDRESS,
                 baud_rate=PT100_BAUD,
                 poll_interval=1.0,
+                shared_lock=rs485_bus_lock,
             )
             if not self._pt100.connect():
                 raise RuntimeError("Could not open serial port")

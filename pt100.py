@@ -64,7 +64,8 @@ class PT100:
                  baud_rate: int = 9600,
                  poll_interval: float = 1.0,
                  timeout: float = 0.5,
-                 on_reading: callable = None):
+                 on_reading: callable = None,
+                 shared_lock: threading.Lock = None):
         """
         Args:
             port:           Serial port (e.g. '/dev/ttyAMA0')
@@ -73,6 +74,10 @@ class PT100:
             poll_interval:  Seconds between automatic polls
             timeout:        Serial read timeout in seconds
             on_reading:     Optional callback(PT100Reading) on each successful read
+            shared_lock:    Lock to use instead of a private one — pass the same Lock
+                            given to another driver on the same serial port, since
+                            minimalmodbus shares one Serial object per port path and an
+                            unshared lock does not prevent cross-driver races on it.
         """
         self.port           = port
         self.device_address = device_address
@@ -82,7 +87,7 @@ class PT100:
         self.on_reading     = on_reading
 
         self._instrument    = None
-        self._lock          = threading.Lock()
+        self._lock          = shared_lock if shared_lock is not None else threading.Lock()
         self._latest        = None          # PT100Reading | None
         self._online        = False
         self._consecutive_failures = 0

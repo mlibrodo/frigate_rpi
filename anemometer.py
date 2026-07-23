@@ -96,7 +96,8 @@ class Anemometer:
                  baud_rate: int = 4800,
                  poll_interval: float = 1.0,
                  timeout: float = 1.0,
-                 on_reading: callable = None):
+                 on_reading: callable = None,
+                 shared_lock: threading.Lock = None):
         """
         Args:
             port:           Serial port (e.g. '/dev/ttyUSB0' or '/dev/ttyAMA0')
@@ -105,6 +106,10 @@ class Anemometer:
             poll_interval:  Seconds between automatic polls (default 1s = sensor response time)
             timeout:        Serial read timeout in seconds
             on_reading:     Optional callback(AnemometerReading) on each successful read
+            shared_lock:    Lock to use instead of a private one — pass the same Lock
+                            given to another driver on the same serial port, since
+                            minimalmodbus shares one Serial object per port path and an
+                            unshared lock does not prevent cross-driver races on it.
         """
         self.port           = port
         self.device_address = device_address
@@ -114,7 +119,7 @@ class Anemometer:
         self.on_reading     = on_reading
 
         self._instrument    = None
-        self._lock          = threading.Lock()
+        self._lock          = shared_lock if shared_lock is not None else threading.Lock()
         self._latest        = None          # AnemometerReading | None
         self._online        = False
         self._consecutive_failures = 0
